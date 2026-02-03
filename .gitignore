@@ -1,0 +1,22 @@
+# 微信开发者工具生成的文件
+.project.private.config.json
+project.private.config.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Claude Code
+.claude/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 临时文件
+*.tmp
+*.log
