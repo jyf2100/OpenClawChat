@@ -1,7 +1,7 @@
 const DEFAULTS = {
-  gatewayUrl: "ws://47.252.93.109:18789",
-  token: "5742f447a7cc1f38499bf38628d02d27",
-  sessionKey: "agent:main:main",
+  gatewayUrl: "",
+  token: "",
+  sessionKey: "",
 };
 
 const SETTINGS_KEY = "openclaw.chat.settings.v1";
