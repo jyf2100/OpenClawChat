@@ -14,10 +14,10 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
             name: 'arm64'
           - platform: 'macos-13' # Intel runner
-            args: '--target x86_64-apple-darwin'
+            target: 'x86_64-apple-darwin'
             name: 'x86_64'
 
     runs-on: ${{ matrix.platform }}
@@ -36,16 +36,18 @@ jobs:
         run: npm ci
 
       - name: Build app
-        run: npm run build ${{ matrix.args }}
+        run: cargo tauri build --target ${{ matrix.target }}
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: RoClaw-Chat-macos-${{ matrix.name }}
           path: |
-            src-tauri/target/release/bundle/macos/*.app
-            src-tauri/target/release/bundle/dmg/*.dmg
-          if-no-files-found: error
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
 
   release:
     needs: build
@@ -63,7 +65,6 @@ jobs:
         with:
           files: |
             artifacts/**/*.dmg
-            artifacts/**/*.app/**/*
           draft: true
           generate_release_notes: true
         env:
