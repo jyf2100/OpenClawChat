@@ -777,6 +777,9 @@ function init() {
   // ========== 渲染连接列表 ==========
   UIManager.renderConnectionList();
 
+  // ========== 初始化房间切换 ==========
+  UIManager.initRoomSwitching();
+
   // ========== 绑定侧边栏按钮事件 ==========
   const addBtn = document.getElementById('addConnBtn');
   if (addBtn) {
