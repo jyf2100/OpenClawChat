@@ -518,12 +518,28 @@ async function loadChatHistory() {
 
 // 处理发送
 async function handleSend(overrideMessage, restoreDraft) {
-  if (!state.connected) return;
   const draft = elements.messageInput.value || "";
   const message = (overrideMessage ?? draft).trim();
   const attachmentsToSend = overrideMessage == null ? state.attachments : [];
   const hasAttachments = attachmentsToSend.length > 0;
   if (!message && !hasAttachments) return;
+
+  // 检查是否在房间模式
+  const isInRoomMode = document.getElementById('roomControls')?.style.display !== 'none';
+
+  if (isInRoomMode) {
+    // 房间模式：使用 handleRoomSend
+    await handleRoomSend(message, attachmentsToSend);
+    if (overrideMessage == null) {
+      elements.messageInput.value = "";
+      state.attachments = [];
+      renderAttachments();
+    }
+    return;
+  }
+
+  // 普通模式：原有逻辑
+  if (!state.connected) return;
 
   if (isBusy()) {
     enqueueMessage(message, attachmentsToSend);
@@ -546,6 +562,51 @@ async function handleSend(overrideMessage, restoreDraft) {
   if (ok && !state.runId) {
     flushQueue();
   }
+}
+
+// 处理房间消息发送
+async function handleRoomSend(message, attachments) {
+  const { cleanText, mentionedIds } = window.messageRouter.parseMentions(message);
+  const messageToSend = cleanText || message;
+
+  // 添加用户消息到房间
+  const userMsg = window.roomManager.addMessage({
+    senderId: 'user',
+    senderName: '你',
+    senderType: 'user',
+    content: messageToSend,
+    mentions: mentionedIds
+  });
+
+  // 渲染消息
+  if (window.UIManager._renderRoomMessage) {
+    window.UIManager._renderRoomMessage(userMsg);
+
+    // 滚动到底部
+    const chatThread = document.getElementById('chatThread');
+    if (chatThread) {
+      chatThread.scrollTop = chatThread.scrollHeight;
+    }
+  }
+
+  // 路由消息
+  try {
+    const results = await window.messageRouter.routeMessage(messageToSend, {
+      mentions: mentionedIds,
+      forceReconnect: true
+    });
+
+    // 显示结果
+    for (const result of results) {
+      if (!result.success) {
+        setHint(`"${result.connName}" 发送失败: ${result.error}`);
+      }
+    }
+  } catch (error) {
+    setHint(`发送失败: ${error.message}`);
+  }
+
+  elements.messageInput.value = '';
 }
 
 // 入队
