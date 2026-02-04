@@ -14,10 +14,8 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            target: 'aarch64-apple-darwin'
             name: 'arm64'
           - platform: 'macos-13'
-            target: 'x86_64-apple-darwin'
             name: 'x86_64'
 
     runs-on: ${{ matrix.platform }}
@@ -39,8 +37,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tauriScript: npm run build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -48,6 +44,5 @@ jobs:
         with:
           name: RoClaw-Chat-macos-${{ matrix.name }}
           path: |
-            src-tauri/target/*/release/bundle/macos/*.app
             src-tauri/target/*/release/bundle/dmg/*.dmg
           if-no-files-found: warn
