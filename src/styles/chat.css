@@ -772,3 +772,78 @@
 .markdown-content .emoji {
   font-style: normal;
 }
+
+/* ============================================
+   工具消息样式
+   ============================================ */
+
+/* 工具消息气泡特殊样式 */
+.chat-line.tool .bubble {
+  background: #fff8e6;
+  border: 1px solid #ffd666;
+}
+
+.chat-line.tool .avatar {
+  background: #ff9500;
+  color: #fff;
+}
+
+/* 工具调用信息卡片 */
+.markdown-content .tool-call,
+.markdown-content .tool-result {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 149, 0, 0.05);
+  border-left: 3px solid #ff9500;
+}
+
+.markdown-content .tool-call {
+  background: rgba(7, 193, 96, 0.05);
+  border-left-color: #07c160;
+}
+
+/* 工具名称标签 */
+.markdown-content .tool-name {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 4px 0;
+  border-radius: 4px;
+  background: rgba(255, 149, 0, 0.15);
+  color: #d44902;
+  font-size: 0.85em;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+}
+
+.markdown-content strong:contains("工具") {
+  color: #d44902;
+}
+
+.markdown-content strong:contains("调用工具") {
+  color: #07c160;
+}
+
+/* JSON 代码块样式优化 */
+.markdown-content pre code.language-json {
+  color: #a5d6ff;
+}
+
+.markdown-content code {
+  font-family: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+}
+
+/* 工具消息中的加粗文本 */
+.chat-line.tool .markdown-content strong {
+  color: #1f2328;
+  font-weight: 600;
+}
+
+/* 工具消息链接 */
+.chat-line.tool .markdown-content a {
+  color: #d44902;
+}
+
+.chat-line.tool .markdown-content a:hover {
+  color: #a33600;
+}
