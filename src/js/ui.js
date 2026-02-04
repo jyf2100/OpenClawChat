@@ -1,6 +1,24 @@
 // UI 操作模块 - 处理连接列表、弹窗和交互
 
 const UIManager = {
+  // ========== 初始化 ==========
+
+  init() {
+    this.renderConnectionList();
+    this.initRoomSwitching();
+
+    // ========== 绑定 AI 交互开关 ==========
+    const aiInteractionToggle = document.getElementById('aiInteractionToggle');
+    if (aiInteractionToggle) {
+      aiInteractionToggle.addEventListener('change', (e) => {
+        if (window.roomManager) {
+          const enabled = window.roomManager.toggleAIInteraction();
+          console.log('AI Interaction:', enabled ? 'ON' : 'OFF');
+        }
+      });
+    }
+  },
+
   // ========== 连接列表渲染 ==========
 
   renderConnectionList() {
@@ -345,8 +363,106 @@ const UIManager = {
   },
 
   _showPublicChatRoom() {
-    // TODO: 在后续任务中实现
-    console.log('Switching to public chat room');
+    const roomControls = document.getElementById('roomControls');
+    const participantList = document.getElementById('participantList');
+    const aiInteractionToggle = document.getElementById('aiInteractionToggle');
+
+    if (roomControls) roomControls.style.display = 'flex';
+
+    // 更新参与者列表
+    this._updateParticipantList();
+
+    // 设置 AI 交互开关状态
+    if (aiInteractionToggle) {
+      aiInteractionToggle.checked = window.roomManager?.aiInteractionEnabled || false;
+    }
+
+    // 渲染房间消息
+    this._renderRoomMessages();
+
+    // 更新窗口标题
+    const titleEl = document.getElementById('currentConnTitle');
+    if (titleEl) titleEl.textContent = '公共聊天';
+  },
+
+  _updateParticipantList() {
+    const participantList = document.getElementById('participantList');
+    if (!participantList) return;
+
+    const participants = window.connectionManager?.getParticipants() || [];
+
+    participantList.innerHTML = participants.map(conn => `
+      <div class="participant-chip">
+        <span class="status ${conn.status}"></span>
+        <span>${this._escapeHtml(conn.name)}</span>
+      </div>
+    `).join('');
+  },
+
+  _renderRoomMessages() {
+    const chatThread = document.getElementById('chatThread');
+    if (!chatThread) return;
+
+    const messages = window.roomManager?.getMessages() || [];
+
+    chatThread.innerHTML = '';
+
+    for (const msg of messages) {
+      this._renderRoomMessage(msg);
+    }
+
+    // 滚动到底部
+    chatThread.scrollTop = chatThread.scrollHeight;
+  },
+
+  _renderRoomMessage(msg) {
+    const chatThread = document.getElementById('chatThread');
+    if (!chatThread) return;
+
+    const line = document.createElement('div');
+    line.className = `chat-line ${msg.senderType === 'user' ? 'user' : 'assistant'}`;
+    line.id = msg.domId || msg.id;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = msg.senderName;
+
+    const content = document.createElement('div');
+    content.className = 'message-content';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    if (msg.senderType === 'ai' || msg.senderType === 'assistant') {
+      const textDiv = document.createElement('div');
+      textDiv.className = 'text markdown-content';
+
+      if (msg.content) {
+        const html = marked.parse(msg.content);
+        textDiv.innerHTML = html;
+
+        textDiv.querySelectorAll('pre code').forEach((block) => {
+          hljs.highlightElement(block);
+        });
+      }
+      bubble.appendChild(textDiv);
+    } else {
+      const text = document.createElement('span');
+      text.className = 'text';
+      text.textContent = msg.content;
+      bubble.appendChild(text);
+    }
+
+    content.appendChild(bubble);
+
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = formatTime(msg.timestamp);
+    content.appendChild(meta);
+
+    line.appendChild(avatar);
+    line.appendChild(content);
+    chatThread.appendChild(line);
   },
 
   // ========== 辅助方法 ==========

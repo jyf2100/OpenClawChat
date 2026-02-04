@@ -285,6 +285,14 @@ class ConnectionManager {
     return state?.status || 'disconnected';
   }
 
+  // 获取参与房间的连接（已连接的）
+  getParticipants() {
+    return this.connections.filter(conn => {
+      const state = this.connectionStates.get(conn.id);
+      return state?.status === 'connected';
+    });
+  }
+
   // ========== 消息管理 ==========
 
   async sendMessage(id, message, attachments = []) {
@@ -463,7 +471,7 @@ class ConnectionManager {
           userAgent: 'desktop',
           locale: 'zh-CN'
         }
-      });
+      }));
     });
   }
 
@@ -484,7 +492,7 @@ class ConnectionManager {
           sessionKey: conn.sessionKey,
           limit: 200
         }
-      });
+      }));
     });
   }
 
@@ -537,12 +545,15 @@ class ConnectionManager {
       return;
     }
 
+    // 如果是活跃连接，触发全局聊天事件处理
+    if (id === this.activeConnectionId && this.onChatEvent) {
+      this.onChatEvent(payload);
+    }
+
     if (payload.state === 'delta' || payload.state === 'final' || payload.state === 'aborted' || payload.state === 'error') {
-      // 处理聊天事件，更新消息缓存
-      // 这里可以复用原有的聊天逻辑
-      if (id === this.activeConnectionId) {
-        // 如果是当前连接，实时更新显示
-        // ...
+      // 更新消息缓存（在 final 状态时重新加载历史）
+      if (payload.state === 'final') {
+        // 在 app.js 的 handleChatEvent 中会加载历史消息
       }
     }
   }
@@ -614,20 +625,55 @@ class ConnectionManager {
 
   _renderMessages(id) {
     const messages = this.messageCache.get(id) || [];
-    // 这里复用原有的消息渲染逻辑
-    // ...
-
-    // 更新窗口标题显示连接名称
     const conn = this.getConnection(id);
-    const titleEl = document.getElementById('currentConnTitle');
-    if (titleEl && conn) {
-      titleEl.textContent = conn.name;
+
+    // 更新 app.js 中的消息状态
+    if (window.state) {
+      window.state.messages = messages;
+      window.state.streamText = null;
+      window.state.runId = null;
+      window.state.streamStartedAt = null;
+
+      // 更新连接配置
+      if (conn) {
+        window.state.gatewayUrl = conn.gatewayUrl;
+        window.state.token = conn.token;
+        window.state.sessionKey = conn.sessionKey;
+      }
+    }
+
+    // 更新设置面板显示
+    if (conn) {
+      const titleEl = document.getElementById('currentConnTitle');
+      if (titleEl) {
+        titleEl.textContent = conn.name;
+      }
+
+      const gatewayInput = document.getElementById('gatewayUrl');
+      const tokenInput = document.getElementById('token');
+      const sessionInput = document.getElementById('sessionKey');
+
+      if (gatewayInput) gatewayInput.value = conn.gatewayUrl;
+      if (tokenInput) tokenInput.value = conn.token || '';
+      if (sessionInput) sessionInput.value = conn.sessionKey;
+    }
+
+    // 调用 app.js 的渲染函数
+    if (window.buildRenderedMessages) {
+      window.buildRenderedMessages();
+    }
+
+    // 更新连接状态显示
+    const status = this.getStatus(id);
+    if (window.setStatus) {
+      window.setStatus(status === 'connected', status === 'connected' ? '已连接' : '未连接');
     }
   }
 
   _showContextMenu(event, connId) {
-    // 显示右键菜单
-    // ...
+    if (window.UIManager) {
+      window.UIManager._showContextMenu(event, connId);
+    }
   }
 
   _escapeHtml(text) {
