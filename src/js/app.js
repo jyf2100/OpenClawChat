@@ -210,6 +210,11 @@ let state = {
   attachments: [],
 };
 
+// 导出到全局供 ConnectionManager 访问
+window.state = state;
+window.buildRenderedMessages = buildRenderedMessages;
+window.setStatus = setStatus;
+
 // WebSocket 相关
 let ws = null;
 let pending = new Map();
@@ -218,15 +223,6 @@ let pending = new Map();
 const elements = {
   status: document.getElementById('status'),
   statusText: document.getElementById('statusText'),
-  settingsBar: document.getElementById('settingsBar'),
-  settingsStatus: document.getElementById('settingsStatus'),
-  settingsArrow: document.getElementById('settingsArrow'),
-  settingsPanel: document.getElementById('settingsPanel'),
-  gatewayUrl: document.getElementById('gatewayUrl'),
-  token: document.getElementById('token'),
-  sessionKey: document.getElementById('sessionKey'),
-  connectBtn: document.getElementById('connectBtn'),
-  refreshBtn: document.getElementById('refreshBtn'),
   hint: document.getElementById('hint'),
   chatThread: document.getElementById('chatThread'),
   queue: document.getElementById('queue'),
@@ -260,17 +256,12 @@ function setStatus(connected, text) {
   state.connected = connected;
   state.statusText = text;
   elements.statusText.textContent = text;
-  elements.connectBtn.textContent = connected ? "断开" : "连接";
 
   if (connected) {
     elements.status.classList.add('connected');
-    elements.settingsStatus.style.display = "inline";
-    elements.refreshBtn.disabled = false;
     elements.sendBtn.classList.remove('disabled');
   } else {
     elements.status.classList.remove('connected');
-    elements.settingsStatus.style.display = "none";
-    elements.refreshBtn.disabled = true;
     elements.sendBtn.classList.add('disabled');
   }
 }
@@ -438,129 +429,87 @@ function renderAttachments() {
   });
 }
 
-// 连接 WebSocket
-function connectSocket() {
+// 连接 WebSocket（使用 ConnectionManager）
+async function connectSocket() {
+  if (!window.connectionManager.activeConnectionId) {
+    setHint("没有活跃连接");
+    return;
+  }
+
   saveSettings();
   setHint("");
   setStatus(false, "连接中…");
 
-  disconnectSocket();
-
-  state.pending = new Map();
-  ws = new WebSocket(state.gatewayUrl);
-
-  ws.onopen = () => {
-    // 等待 connect.challenge
-  };
-
-  ws.onmessage = (event) => {
-    let parsed;
-    try {
-      parsed = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-
-    if (parsed.type === "event") {
-      if (parsed.event === "connect.challenge") {
-        state.connectNonce = parsed?.payload?.nonce || null;
-        send连接();
-        return;
-      }
-      if (parsed.event === "chat") {
-        handleChatEvent(parsed.payload);
-      }
-      return;
-    }
-
-    if (parsed.type === "res") {
-      const pendingReq = pending.get(parsed.id);
-      if (!pendingReq) return;
-      pending.delete(parsed.id);
-      if (parsed.ok) pendingReq.resolve(parsed.payload);
-      else pendingReq.reject(new Error(parsed.error?.message || "请求失败"));
-    }
-  };
-
-  ws.onclose = () => {
-    setStatus(false, "未连接");
-    updateSecondaryLabel();
-  };
-
-  ws.onerror = (err) => {
-    setHint(`Socket 错误: ${JSON.stringify(err)}`);
-  };
-}
-
-// 断开连接
-function disconnectSocket() {
-  if (ws) {
-    try {
-      ws.close();
-    } catch {
-      // ignore
-    }
-  }
-  ws = null;
-  pending = new Map();
-  setStatus(false, "未连接");
-  updateSecondaryLabel();
-}
-
-// 发送请求
-function request(method, params) {
-  return new Promise((resolve, reject) => {
-    if (!ws) {
-      reject(new Error("网关未连接"));
-      return;
-    }
-    const id = generateUUID();
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ type: "req", id, method, params }));
-  });
-}
-
-// 发送连接请求
-async function send连接() {
-  const params = {
-    minProtocol: 3,
-    maxProtocol: 3,
-    client: {
-      id: "webchat",
-      version: "desktop-1",
-      platform: "desktop",
-      mode: "webchat",
-    },
-    role: "operator",
-    scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
-    auth: state.token ? { token: state.token } : undefined,
-    userAgent: "desktop",
-    locale: "zh-CN",
-  };
-
   try {
-    await request("connect", params);
+    await window.connectionManager.connect(window.connectionManager.activeConnectionId);
     setStatus(true, "已连接");
     state.runId = null;
     state.streamText = null;
     state.streamStartedAt = null;
-    await loadChatHistory();
+
+    // 从 ConnectionManager 加载消息
+    const messages = window.connectionManager.getMessages(window.connectionManager.activeConnectionId);
+    state.messages = messages;
+    buildRenderedMessages();
     updateSecondaryLabel();
+
+    // 更新连接列表状态
+    UIManager.renderConnectionList();
   } catch (err) {
     setHint(String(err));
-    disconnectSocket();
+    setStatus(false, "连接失败");
+    UIManager.renderConnectionList();
   }
 }
 
-// 加载聊天历史
+// 断开连接（使用 ConnectionManager）
+function disconnectSocket() {
+  if (window.connectionManager.activeConnectionId) {
+    window.connectionManager.disconnect(window.connectionManager.activeConnectionId);
+  }
+  setStatus(false, "未连接");
+  updateSecondaryLabel();
+  UIManager.renderConnectionList();
+}
+
+// 发送请求（通过 ConnectionManager）
+function request(method, params) {
+  return new Promise((resolve, reject) => {
+    const activeId = window.connectionManager?.activeConnectionId;
+    if (!activeId) {
+      reject(new Error("没有活跃连接"));
+      return;
+    }
+
+    const state = window.connectionManager.connectionStates.get(activeId);
+    if (!state || !state.ws) {
+      reject(new Error("网关未连接"));
+      return;
+    }
+
+    const id = generateUUID();
+    state.pending.set(id, { resolve, reject });
+    state.ws.send(JSON.stringify({ type: "req", id, method, params }));
+  });
+}
+
+// 加载聊天历史（通过 ConnectionManager）
 async function loadChatHistory() {
-  if (!state.connected) return;
+  const activeId = window.connectionManager?.activeConnectionId;
+  if (!activeId) return;
+
   try {
+    const conn = window.connectionManager.getConnection(activeId);
     const res = await request("chat.history", {
-      sessionKey: state.sessionKey,
+      sessionKey: conn.sessionKey,
       limit: 200,
     });
     state.messages = Array.isArray(res?.messages) ? res.messages : [];
+
+    // 更新 ConnectionManager 的消息缓存
+    window.connectionManager.messageCache.set(activeId, state.messages);
+    Storage.saveMessages(activeId, state.messages);
+
     buildRenderedMessages();
   } catch (err) {
     setHint(String(err));
@@ -631,8 +580,20 @@ function isBusy() {
   return state.sending || Boolean(state.runId);
 }
 
-// 发送聊天消息
+// 发送聊天消息（通过 ConnectionManager）
 async function sendChatMessage(message, attachments) {
+  const activeId = window.connectionManager?.activeConnectionId;
+  if (!activeId) {
+    setHint("没有活跃连接");
+    return false;
+  }
+
+  const conn = window.connectionManager.getConnection(activeId);
+  if (!conn) {
+    setHint("连接不存在");
+    return false;
+  }
+
   const now = Date.now();
   const contentBlocks = [];
   if (message) contentBlocks.push({ type: "text", text: message });
@@ -670,12 +631,16 @@ async function sendChatMessage(message, attachments) {
 
   try {
     await request("chat.send", {
-      sessionKey: state.sessionKey,
+      sessionKey: conn.sessionKey,
       message,
       deliver: false,
       idempotencyKey: state.runId,
       attachments: apiAttachments,
     });
+
+    // 更新 ConnectionManager 的消息缓存
+    window.connectionManager._addLocalMessage(activeId, localMessage);
+
     state.sending = false;
     return true;
   } catch (err) {
@@ -691,6 +656,10 @@ async function sendChatMessage(message, attachments) {
     state.streamText = null;
     state.streamStartedAt = null;
     state.messages = state.messages.concat(errorMsg);
+
+    // 更新 ConnectionManager 的消息缓存
+    window.connectionManager._addLocalMessage(activeId, errorMsg);
+
     buildRenderedMessages();
     return false;
   } finally {
@@ -698,22 +667,29 @@ async function sendChatMessage(message, attachments) {
   }
 }
 
-// 中止聊天
+// 中止聊天（通过 ConnectionManager）
 async function abortChat() {
-  if (!state.connected) return;
+  const activeId = window.connectionManager?.activeConnectionId;
+  if (!activeId || !state.connected) return;
+
   try {
+    const conn = window.connectionManager.getConnection(activeId);
     await request("chat.abort", state.runId
-      ? { sessionKey: state.sessionKey, runId: state.runId }
-      : { sessionKey: state.sessionKey }
+      ? { sessionKey: conn.sessionKey, runId: state.runId }
+      : { sessionKey: conn.sessionKey }
     );
   } catch (err) {
     setHint(String(err));
   }
 }
 
-// 处理聊天事件
+// 处理聊天事件（通过 ConnectionManager）
 function handleChatEvent(payload) {
-  if (!payload || payload.sessionKey !== state.sessionKey) return;
+  const activeId = window.connectionManager?.activeConnectionId;
+  if (!activeId || !payload) return;
+
+  const conn = window.connectionManager.getConnection(activeId);
+  if (!conn || payload.sessionKey !== conn.sessionKey) return;
 
   if (payload.state === "delta") {
     const next = extractText(payload.message);
@@ -785,51 +761,40 @@ function chooseImage() {
 
 // 初始化
 function init() {
-  // 加载设置
-  const settings = wxCompat.getStorageSync(SETTINGS_KEY);
-  if (settings) {
-    state.gatewayUrl = settings.gatewayUrl || DEFAULTS.gatewayUrl;
-    state.token = settings.token || DEFAULTS.token;
-    state.sessionKey = settings.sessionKey || DEFAULTS.sessionKey;
+  // ========== 初始化房间管理器 ==========
+  window.roomManager = new RoomManager();
+  window.roomManager.init();
+
+  // ========== 初始化连接管理器 ==========
+  window.connectionManager = new ConnectionManager();
+  window.connectionManager.init();
+
+  // 设置聊天事件回调
+  window.connectionManager.onChatEvent = (payload) => {
+    handleChatEvent(payload);
+  };
+
+  // ========== 渲染连接列表 ==========
+  UIManager.renderConnectionList();
+
+  // ========== 绑定侧边栏按钮事件 ==========
+  const addBtn = document.getElementById('addConnBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      UIManager.showAddConnectionModal();
+    });
   }
 
-  // 设置输入框值
-  elements.gatewayUrl.value = state.gatewayUrl;
-  elements.token.value = state.token;
-  elements.sessionKey.value = state.sessionKey;
+  // ========== 加载当前活跃连接的配置 ==========
+  const activeConn = window.connectionManager.getConnection(window.connectionManager.activeConnectionId);
+  if (activeConn) {
+    state.gatewayUrl = activeConn.gatewayUrl;
+    state.token = activeConn.token;
+    state.sessionKey = activeConn.sessionKey;
+    document.getElementById('currentConnTitle').textContent = activeConn.name;
+  }
 
-  // 绑定事件
-  elements.settingsBar.addEventListener('click', () => {
-    const expanded = elements.settingsPanel.style.display !== "none";
-    elements.settingsPanel.style.display = expanded ? "none" : "block";
-    elements.settingsArrow.classList.toggle('expanded', !expanded);
-  });
-
-  elements.gatewayUrl.addEventListener('input', (e) => {
-    state.gatewayUrl = e.target.value;
-  });
-
-  elements.token.addEventListener('input', (e) => {
-    state.token = e.target.value;
-  });
-
-  elements.sessionKey.addEventListener('input', (e) => {
-    state.sessionKey = e.target.value;
-  });
-
-  elements.connectBtn.addEventListener('click', () => {
-    if (state.connected) {
-      disconnectSocket();
-    } else {
-      connectSocket();
-    }
-  });
-
-  elements.refreshBtn.addEventListener('click', () => {
-    if (!state.connected) return;
-    loadChatHistory();
-  });
-
+  // ========== 绑定事件 ==========
   elements.secondaryBtn.addEventListener('click', () => {
     if (state.runId) {
       abortChat();
@@ -852,9 +817,6 @@ function init() {
       handleSend();
     }
   });
-
-  // 保存初始设置
-  saveSettings();
 }
 
 // 启动应用
