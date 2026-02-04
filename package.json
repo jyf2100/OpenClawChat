@@ -1,7 +1,7 @@
 {
-  "name": "openclaw-chat-desktop",
+  "name": "roclaw-chat-desktop",
   "version": "0.1.0",
-  "description": "OpenClaw AI 对话桌面客户端",
+  "description": "RoClaw AI 对话桌面客户端",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

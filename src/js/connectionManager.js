@@ -172,6 +172,11 @@ class ConnectionManager {
     // 清除存储
     Storage.clearMessages(id);
 
+    // 从房间管理器中移除参与者
+    if (window.roomManager) {
+      window.roomManager.removeParticipant(id);
+    }
+
     // 如果删除的是活跃连接，切换到第一个连接
     if (this.activeConnectionId === id) {
       if (this.connections.length > 0) {
@@ -183,6 +188,11 @@ class ConnectionManager {
     }
 
     Storage.saveConnections(this.connections);
+
+    // 更新 UI（参与者列表）
+    if (window.UIManager && window.UIManager._updateRoomStatusBar) {
+      window.UIManager._updateRoomStatusBar();
+    }
   }
 
   getConnection(id) {
@@ -302,7 +312,12 @@ class ConnectionManager {
     }
 
     const requestId = this._generateRequestId();
-    state.pending.set(requestId, { message, attachments });
+
+    // 设置 pending（包含空的 resolve/reject 以响应处理时不会报错）
+    state.pending.set(requestId, {
+      resolve: () => {},  // chat.send 的响应不需要特殊处理
+      reject: () => {}
+    });
 
     try {
       // 发送消息
@@ -364,6 +379,11 @@ class ConnectionManager {
 
     // 清除未读数
     this.markAsRead(id);
+
+    // 通知 UIManager 切换房间（隐藏公共聊天状态栏）
+    if (window.UIManager && window.UIManager.switchToRoom) {
+      window.UIManager.switchToRoom(id);
+    }
 
     // 重新渲染界面
     this._renderConnectionList();
@@ -427,6 +447,11 @@ class ConnectionManager {
     }
 
     this._renderConnectionList();
+
+    // 如果在公共聊天模式，更新参与者显示
+    if (window.UIManager && window.UIManager._updateRoomStatusBar) {
+      window.UIManager._updateRoomStatusBar();
+    }
   }
 
   _updateConnectionInList(id) {
@@ -540,18 +565,34 @@ class ConnectionManager {
   }
 
   _handleChatEvent(id, payload) {
+    console.log('[ChatEvent] 收到聊天事件，连接ID:', id, '状态:', payload.state);
+
     const conn = this.getConnection(id);
-    if (!conn || payload.sessionKey !== conn.sessionKey) {
+    if (!conn) {
+      console.warn('[ChatEvent] 连接不存在:', id);
+      return;
+    }
+    if (payload.sessionKey !== conn.sessionKey) {
+      console.warn('[ChatEvent] sessionKey 不匹配');
       return;
     }
 
+    console.log('[ChatEvent] 连接名称:', conn.name);
+
     // 检查是否在房间模式
-    const isInRoomMode = document.getElementById('roomControls')?.style.display !== 'none';
+    const roomStatusBar = document.getElementById('roomStatusBar');
+    const isInRoomMode = roomStatusBar && roomStatusBar.style.display === 'flex';
+
+    console.log('[ChatEvent] roomStatusBar.display:', roomStatusBar?.style.display);
+    console.log('[ChatEvent] isInRoomMode:', isInRoomMode);
+    console.log('[ChatEvent] roomManager 存在:', !!window.roomManager);
 
     if (isInRoomMode && window.roomManager) {
+      console.log('[ChatEvent] 房间模式 -> 调用 _handleRoomChatEvent');
       // 房间模式：将 AI 回复添加到房间
       this._handleRoomChatEvent(id, payload, conn);
     } else {
+      console.log('[ChatEvent] 普通模式 -> 调用 onChatEvent, activeConnectionId:', this.activeConnectionId, '当前ID:', id);
       // 普通模式：原有逻辑
       if (id === this.activeConnectionId && this.onChatEvent) {
         this.onChatEvent(payload);
@@ -567,13 +608,21 @@ class ConnectionManager {
   }
 
   _handleRoomChatEvent(id, payload, conn) {
+    console.log('[RoomChatEvent] 收到房间聊天事件，连接:', conn.name, '状态:', payload.state);
+    console.log('[RoomChatEvent] payload.message:', JSON.stringify(payload.message));
+
     // 提取消息内容
     const text = extractText(payload.message);
+    console.log('[RoomChatEvent] 提取的文本内容:', text?.substring(0, 100) || '(空)');
 
-    if (!text) return;
+    if (!text) {
+      console.warn('[RoomChatEvent] 文本内容为空，跳过');
+      return;
+    }
 
     // 根据 payload.state 决定如何处理
     if (payload.state === 'delta') {
+      console.log('[RoomChatEvent] 处理流式更新 (delta)');
       // 流式更新：更新或创建临时消息
       let tempMsg = this._tempRoomMessage;
       if (!tempMsg) {
@@ -585,16 +634,22 @@ class ConnectionManager {
           isStreaming: true
         });
         this._tempRoomMessage = tempMsg;
+        console.log('[RoomChatEvent] 创建新消息，ID:', tempMsg.id);
 
         // 渲染消息
+        console.log('[RoomChatEvent] UIManager._renderRoomMessage 存在:', !!window.UIManager._renderRoomMessage);
         if (window.UIManager._renderRoomMessage) {
+          console.log('[RoomChatEvent] 调用 _renderRoomMessage');
           window.UIManager._renderRoomMessage(tempMsg);
+        } else {
+          console.error('[RoomChatEvent] UIManager._renderRoomMessage 不存在！');
         }
       } else {
         // 更新现有消息
         tempMsg.content = text;
         const chatThread = document.getElementById('chatThread');
         const line = document.getElementById(tempMsg.id);
+        console.log('[RoomChatEvent] 更新现有消息，找到元素:', !!line);
         if (line) {
           const bubble = line.querySelector('.bubble .text');
           if (bubble) {
@@ -603,8 +658,10 @@ class ConnectionManager {
         }
       }
     } else if (payload.state === 'final') {
+      console.log('[RoomChatEvent] 处理最终消息 (final)');
       // 最终消息：完成流式更新
       if (this._tempRoomMessage) {
+        console.log('[RoomChatEvent] 更新临时消息为最终消息');
         this._tempRoomMessage.content = text;
         this._tempRoomMessage.isStreaming = false;
         window.roomManager.saveMessages();
@@ -612,19 +669,45 @@ class ConnectionManager {
         // 更新 UI（支持 Markdown）
         const chatThread = document.getElementById('chatThread');
         const line = document.getElementById(this._tempRoomMessage.id);
+        console.log('[RoomChatEvent] 找到消息元素:', !!line);
+
         if (line) {
+          console.log('[RoomChatEvent] line 元素 innerHTML 预览:', line.innerHTML.substring(0, 200));
+          console.log('[RoomChatEvent] line.className:', line.className);
+
           const bubble = line.querySelector('.bubble');
+          console.log('[RoomChatEvent] 找到 bubble 元素:', !!bubble);
+
           if (bubble) {
-            bubble.innerHTML = `<div class="text markdown-content">${marked.parse(text)}</div>`;
-            // 高亮代码块
-            bubble.querySelectorAll('pre code').forEach((block) => {
-              hljs.highlightElement(block);
-            });
+            console.log('[RoomChatEvent] bubble.className:', bubble.className);
+            console.log('[RoomChatEvent] bubble.innerHTML 更新前:', bubble.innerHTML.substring(0, 100));
+
+            try {
+              const html = marked.parse(text);
+              console.log('[RoomChatEvent] Markdown 解析成功，长度:', html.length);
+              bubble.innerHTML = `<div class="text markdown-content">${html}</div>`;
+              console.log('[RoomChatEvent] bubble.innerHTML 已更新，新内容长度:', bubble.innerHTML.length);
+
+              // 高亮代码块
+              const codeBlocks = bubble.querySelectorAll('pre code');
+              console.log('[RoomChatEvent] 找到代码块数量:', codeBlocks.length);
+              codeBlocks.forEach((block) => {
+                hljs.highlightElement(block);
+              });
+              console.log('[RoomChatEvent] 代码高亮完成');
+            } catch (error) {
+              console.error('[RoomChatEvent] 更新 UI 时出错:', error);
+            }
+          } else {
+            console.error('[RoomChatEvent] bubble 元素不存在！line 内容:', line.innerHTML);
           }
+        } else {
+          console.error('[RoomChatEvent] line 元素不存在！');
         }
 
         this._tempRoomMessage = null;
       } else {
+        console.log('[RoomChatEvent] 创建新最终消息');
         // 创建新消息
         const aiMsg = window.roomManager.addMessage({
           senderId: conn.id,
@@ -632,9 +715,14 @@ class ConnectionManager {
           senderType: 'ai',
           content: text
         });
+        console.log('[RoomChatEvent] 新消息已创建，ID:', aiMsg.id);
 
+        console.log('[RoomChatEvent] UIManager._renderRoomMessage 存在:', !!window.UIManager._renderRoomMessage);
         if (window.UIManager._renderRoomMessage) {
+          console.log('[RoomChatEvent] 调用 _renderRoomMessage');
           window.UIManager._renderRoomMessage(aiMsg);
+        } else {
+          console.error('[RoomChatEvent] UIManager._renderRoomMessage 不存在！');
         }
       }
 
@@ -642,6 +730,38 @@ class ConnectionManager {
       const chatThread = document.getElementById('chatThread');
       if (chatThread) {
         chatThread.scrollTop = chatThread.scrollHeight;
+      }
+
+      // ========== 对话循环触发逻辑 ==========
+      console.log('[RoomChatEvent] 检查对话循环状态...');
+      if (window.roomManager && window.roomManager.conversationLoop.isActive) {
+        const loopState = window.roomManager.conversationLoop;
+        console.log('[RoomChatEvent] 对话循环激活中，当前发言者:', conn.id, '参与者列表:', loopState.participants);
+
+        if (loopState.participants.includes(id)) {
+          console.log('[RoomChatEvent] 当前发言者在参与者列表中，检查是否继续...');
+          if (window.roomManager.shouldContinueLoop(id, text)) {
+            const nextSpeakerId = window.roomManager.getNextSpeaker();
+            console.log('[RoomChatEvent] 下一个发言者:', nextSpeakerId);
+
+            if (nextSpeakerId && nextSpeakerId !== id) {
+              // 延迟 1.5 秒后触发下一个发言者
+              setTimeout(() => {
+                this._triggerNextSpeaker(nextSpeakerId, text, conn);
+              }, 1500);
+            } else if (!nextSpeakerId) {
+              console.log('[RoomChatEvent] 没有下一个发言者，生成总结');
+              this._generateLoopSummary();
+            }
+          } else {
+            console.log('[RoomChatEvent] 循环条件不满足，生成总结');
+            this._generateLoopSummary();
+          }
+        } else {
+          console.log('[RoomChatEvent] 当前发言者不在参与者列表中');
+        }
+      } else {
+        console.log('[RoomChatEvent] 对话循环未激活');
       }
     } else if (payload.state === 'error') {
       // 错误状态
@@ -784,6 +904,92 @@ class ConnectionManager {
 
   _generateMessageId() {
     return 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  }
+
+  // ========== 对话循环相关方法 ==========
+
+  // 触发下一个发言者
+  async _triggerNextSpeaker(nextSpeakerId, previousMessage, previousConn) {
+    console.log('[TriggerNextSpeaker] 触发下一个发言者:', nextSpeakerId);
+    console.log('[TriggerNextSpeaker] 上一个消息来自:', previousConn.name);
+
+    const nextConn = this.getConnection(nextSpeakerId);
+    if (!nextConn) {
+      console.error('[TriggerNextSpeaker] 找不到连接:', nextSpeakerId);
+      window.roomManager.stopConversationLoop('conn_not_found');
+      return;
+    }
+
+    // 构建上下文消息
+    const contextMsg = `${previousConn.name} 的回复:\n${previousMessage}\n\n请继续讨论这个话题。`;
+    console.log('[TriggerNextSpeaker] 上下文消息长度:', contextMsg.length);
+
+    try {
+      if (window.messageRouter) {
+        await window.messageRouter.routeMessage(contextMsg, {
+          mentions: [nextSpeakerId],
+          includeContext: true,
+          forceReconnect: false
+        });
+        console.log('[TriggerNextSpeaker] 消息已发送');
+
+        // 更新 UI 状态
+        if (window.UIManager && window.UIManager._updateLoopStatusUI) {
+          window.UIManager._updateLoopStatusUI();
+        }
+      } else {
+        console.error('[TriggerNextSpeaker] messageRouter 不存在');
+      }
+    } catch (error) {
+      console.error('[TriggerNextSpeaker] 发送失败:', error);
+      if (window.roomManager) {
+        window.roomManager.stopConversationLoop('send_error');
+      }
+    }
+  }
+
+  // 生成循环总结
+  _generateLoopSummary() {
+    console.log('[LoopSummary] 生成循环总结');
+    const loopState = window.roomManager?.conversationLoop;
+    if (!loopState) {
+      console.warn('[LoopSummary] 循环状态不存在');
+      return;
+    }
+
+    const duration = loopState.startTime ? Date.now() - loopState.startTime : 0;
+    const durationSeconds = Math.floor(duration / 1000);
+    const minutes = Math.floor(durationSeconds / 60);
+    const seconds = durationSeconds % 60;
+    const durationText = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+
+    const summaryMsg = {
+      senderId: 'system',
+      senderName: '系统',
+      senderType: 'system',
+      content: `对话循环已结束。\n\n总轮数: ${loopState.currentRound}/${loopState.maxRounds}\n参与 AI: ${loopState.participants.length}\n持续时间: ${durationText}\n结束原因: ${loopState.autoStop ? '达到最大轮数' : '手动停止'}`,
+      timestamp: Date.now()
+    };
+
+    console.log('[LoopSummary] 总结消息:', summaryMsg);
+
+    if (window.roomManager) {
+      const msg = window.roomManager.addMessage(summaryMsg);
+      if (window.UIManager._renderRoomMessage) {
+        window.UIManager._renderRoomMessage(msg);
+
+        // 滚动到底部
+        const chatThread = document.getElementById('chatThread');
+        if (chatThread) {
+          chatThread.scrollTop = chatThread.scrollHeight;
+        }
+      }
+    }
+
+    // 更新 UI 状态
+    if (window.UIManager && window.UIManager._updateLoopStatusUI) {
+      window.UIManager._updateLoopStatusUI();
+    }
   }
 }
 

@@ -46,27 +46,42 @@
               <div class="brand-dot"></div>
               <span class="brand-title" id="currentConnTitle">RoClaw 对话</span>
             </div>
-            <div class="status" id="status">
-              <div class="status-dot"></div>
-              <span class="status-text" id="statusText">未连接</span>
+            <div class="topbar-right">
+              <!-- 房间状态栏（仅公共聊天显示） -->
+              <div class="room-status-bar" id="roomStatusBar" style="display: none;">
+                <div class="participants-compact">
+                  <span class="participants-label">参与:</span>
+                  <span class="participants-count" id="participantsCount">0</span>
+                  <button class="participants-add-btn" id="participantsAddBtn" title="添加参与者">+</button>
+                  <button class="participants-remove-btn" id="participantsRemoveBtn" title="清空参与者">×</button>
+                  <div class="participants-tooltip" id="participantsTooltip">
+                    <!-- 参与者列表将通过 JS 动态插入 -->
+                  </div>
+                  <div class="participants-dropdown" id="participantsDropdown">
+                    <!-- 可用连接列表将通过 JS 动态插入 -->
+                  </div>
+                </div>
+                <label class="interaction-switch">
+                  <input type="checkbox" id="aiInteractionToggle">
+                  <span>AI交互</span>
+                </label>
+                <div class="loop-control">
+                  <label class="loop-switch">
+                    <input type="checkbox" id="conversationLoopToggle">
+                    <span>循环</span>
+                  </label>
+                  <div class="loop-status" id="loopStatus" style="display: none;">
+                    <span class="loop-rounds" id="loopRounds">0/10</span>
+                    <button class="btn btn-mini" id="stopLoopBtn">停止</button>
+                  </div>
+                </div>
+              </div>
+              <!-- 连接状态（始终显示） -->
+              <div class="status" id="status">
+                <div class="status-dot"></div>
+                <span class="status-text" id="statusText">未连接</span>
+              </div>
             </div>
-          </div>
-
-        </div>
-
-        <!-- 房间控制面板（仅在公共聊天模式显示） -->
-        <div class="room-controls" id="roomControls" style="display: none;">
-          <div class="room-participants">
-            <span class="participants-label">参与中:</span>
-            <div class="participant-list" id="participantList">
-              <!-- 参与者将通过 JS 动态插入 -->
-            </div>
-          </div>
-          <div class="room-settings">
-            <label class="interaction-switch">
-              <input type="checkbox" id="aiInteractionToggle">
-              <span>AI 交互模式</span>
-            </label>
           </div>
         </div>
 
@@ -82,6 +97,9 @@
             <!-- 队列项将通过 JS 动态插入 -->
           </div>
         </div>
+
+        <!-- 提示消息 -->
+        <div class="hint" id="hint" style="display: none;"></div>
 
         <!-- 底部输入栏 -->
         <div class="compose-fixed">
@@ -174,6 +192,7 @@
     <div class="context-menu-item context-menu-danger" data-action="delete">🗑️ 删除</div>
   </div>
 
+  <script src="js/utils.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/connectionManager.js"></script>
   <script src="js/roomManager.js"></script>

@@ -6,17 +6,6 @@ const UIManager = {
   init() {
     this.renderConnectionList();
     this.initRoomSwitching();
-
-    // ========== 绑定 AI 交互开关 ==========
-    const aiInteractionToggle = document.getElementById('aiInteractionToggle');
-    if (aiInteractionToggle) {
-      aiInteractionToggle.addEventListener('change', (e) => {
-        if (window.roomManager) {
-          const enabled = window.roomManager.toggleAIInteraction();
-          console.log('AI Interaction:', enabled ? 'ON' : 'OFF');
-        }
-      });
-    }
   },
 
   // ========== 连接列表渲染 ==========
@@ -349,13 +338,21 @@ const UIManager = {
       el.classList.remove('active');
     });
 
+    const roomStatusBar = document.getElementById('roomStatusBar');
+
     if (roomId === 'public') {
       const roomBtn = document.getElementById('publicRoomBtn');
       if (roomBtn) roomBtn.classList.add('active');
 
+      // 显示房间状态栏
+      if (roomStatusBar) roomStatusBar.style.display = 'flex';
+
       // 显示公共聊天界面
       this._showPublicChatRoom();
     } else {
+      // 隐藏房间状态栏
+      if (roomStatusBar) roomStatusBar.style.display = 'none';
+
       // 切换回普通连接
       const connItem = document.querySelector(`.conn-item[data-id="${roomId}"]`);
       if (connItem) connItem.classList.add('active');
@@ -363,19 +360,68 @@ const UIManager = {
   },
 
   _showPublicChatRoom() {
-    const roomControls = document.getElementById('roomControls');
-    const participantList = document.getElementById('participantList');
     const aiInteractionToggle = document.getElementById('aiInteractionToggle');
+    const loopToggle = document.getElementById('conversationLoopToggle');
+    const stopBtn = document.getElementById('stopLoopBtn');
 
-    if (roomControls) roomControls.style.display = 'flex';
-
-    // 更新参与者列表
-    this._updateParticipantList();
+    // 更新参与者显示
+    this._updateParticipantsDisplay();
 
     // 设置 AI 交互开关状态
-    if (aiInteractionToggle) {
-      aiInteractionToggle.checked = window.roomManager?.aiInteractionEnabled || false;
+    if (aiInteractionToggle && window.roomManager) {
+      aiInteractionToggle.checked = window.roomManager.aiInteractionEnabled;
+      console.log('[UI] _showPublicChatRoom - 设置开关状态:', window.roomManager.aiInteractionEnabled);
+
+      // 确保事件监听器已绑定（如果还没绑定）
+      if (!aiInteractionToggle._hasChangeListener) {
+        aiInteractionToggle.addEventListener('change', (e) => {
+          console.log('[UI] 开关 change 事件触发，当前值:', e.target.checked);
+          if (window.roomManager) {
+            window.roomManager.aiInteractionEnabled = e.target.checked;
+            // 保存到 localStorage
+            localStorage.setItem('roclaw.room.ai_interaction', String(e.target.checked));
+            console.log('[UI] 已更新 roomManager.aiInteractionEnabled 为:', window.roomManager.aiInteractionEnabled);
+          }
+        });
+        aiInteractionToggle._hasChangeListener = true;
+        console.log('[UI] 已绑定开关事件监听器');
+      }
     }
+
+    // ========== 绑定对话循环开关 ==========
+    if (loopToggle && window.roomManager) {
+      loopToggle.checked = window.roomManager.conversationLoop.enabled;
+      console.log('[UI] _showPublicChatRoom - 设置循环开关状态:', window.roomManager.conversationLoop.enabled);
+
+      if (!loopToggle._hasChangeListener) {
+        loopToggle.addEventListener('change', (e) => {
+          console.log('[UI] 循环开关 change 事件触发，当前值:', e.target.checked);
+          if (window.roomManager) {
+            window.roomManager.conversationLoop.enabled = e.target.checked;
+            window.roomManager._saveLoopState();
+            console.log('[UI] 已更新 roomManager.conversationLoop.enabled 为:', window.roomManager.conversationLoop.enabled);
+          }
+        });
+        loopToggle._hasChangeListener = true;
+        console.log('[UI] 已绑定循环开关事件监听器');
+      }
+    }
+
+    // ========== 绑定停止按钮 ==========
+    if (stopBtn && !stopBtn._hasClickListener) {
+      stopBtn.addEventListener('click', () => {
+        console.log('[UI] 停止按钮点击');
+        if (window.roomManager) {
+          window.roomManager.stopConversationLoop('manual');
+          this._updateLoopStatusUI();
+        }
+      });
+      stopBtn._hasClickListener = true;
+      console.log('[UI] 已绑定停止按钮事件监听器');
+    }
+
+    // 更新循环状态 UI
+    this._updateLoopStatusUI();
 
     // 渲染房间消息
     this._renderRoomMessages();
@@ -385,18 +431,212 @@ const UIManager = {
     if (titleEl) titleEl.textContent = '公共聊天';
   },
 
-  _updateParticipantList() {
-    const participantList = document.getElementById('participantList');
-    if (!participantList) return;
+  // 更新参与者显示（精简版 + tooltip）
+  _updateParticipantsDisplay() {
+    // 从 roomManager 获取参与者 ID 列表
+    const participantIds = window.roomManager ? Array.from(window.roomManager.participantIds) : [];
 
-    const participants = window.connectionManager?.getParticipants() || [];
+    // 根据 ID 获取完整的连接信息
+    const participants = participantIds
+      .map(id => window.connectionManager?.getConnection(id))
+      .filter(conn => conn && conn.status === 'connected');
 
-    participantList.innerHTML = participants.map(conn => `
-      <div class="participant-chip">
-        <span class="status ${conn.status}"></span>
-        <span>${this._escapeHtml(conn.name)}</span>
-      </div>
-    `).join('');
+    // 获取所有可用的连接（已连接的）
+    const allConnections = window.connectionManager?.getParticipants() || [];
+
+    const countEl = document.getElementById('participantsCount');
+    const tooltipEl = document.getElementById('participantsTooltip');
+    const removeBtn = document.getElementById('participantsRemoveBtn');
+    const addBtn = document.getElementById('participantsAddBtn');
+    const dropdownEl = document.getElementById('participantsDropdown');
+
+    if (countEl) countEl.textContent = participants.length;
+
+    // 删除按钮状态：没有参与者时禁用
+    if (removeBtn) {
+      removeBtn.disabled = participants.length === 0;
+      removeBtn.style.opacity = participants.length === 0 ? '0.3' : '1';
+      removeBtn.style.cursor = participants.length === 0 ? 'not-allowed' : 'pointer';
+    }
+
+    // 构建 tooltip 内容
+    if (tooltipEl) {
+      if (participants.length === 0) {
+        tooltipEl.innerHTML = '<div class="participant-item">暂无参与者</div>';
+      } else {
+        tooltipEl.innerHTML = participants.map(conn => `
+          <div class="participant-item">
+            <div class="participant-item-info">
+              <span class="status-dot ${conn.status}"></span>
+              <span>${this._escapeHtml(conn.name)}</span>
+            </div>
+            <button class="participant-item-remove" data-conn-id="${conn.id}" title="移除">×</button>
+          </div>
+        `).join('');
+
+        // 绑定删除按钮事件
+        tooltipEl.querySelectorAll('.participant-item-remove').forEach(btn => {
+          if (!btn._hasClickHandler) {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const connId = e.target.dataset.connId;
+              this._removeParticipant(connId);
+            });
+            btn._hasClickHandler = true;
+          }
+        });
+      }
+    }
+
+    // 构建下拉菜单内容
+    if (dropdownEl) {
+      if (allConnections.length === 0) {
+        dropdownEl.innerHTML = '<div class="participant-dropdown-item" style="cursor: default; color: #999;">暂无可用连接</div>';
+      } else {
+        dropdownEl.innerHTML = allConnections.map(conn => {
+          const isInRoom = participantIds.includes(conn.id);
+          return `
+            <div class="participant-dropdown-item ${isInRoom ? 'in-room' : ''}" data-conn-id="${conn.id}">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="status-dot ${conn.status}"></span>
+                <span>${this._escapeHtml(conn.name)}</span>
+              </div>
+              <button class="participant-dropdown-add ${isInRoom ? 'added' : ''}" data-conn-id="${conn.id}">
+                ${isInRoom ? '已加入' : '加入'}
+              </button>
+            </div>
+          `;
+        }).join('');
+
+        // 绑定加入按钮事件
+        dropdownEl.querySelectorAll('.participant-dropdown-add:not(.added)').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const connId = e.target.dataset.connId;
+            this._addParticipant(connId);
+          });
+        });
+      }
+    }
+
+    // 绑定顶部删除按钮事件（移除所有参与者）
+    if (removeBtn && !removeBtn._hasClickHandler) {
+      removeBtn.addEventListener('click', () => {
+        this._removeAllParticipants();
+      });
+      removeBtn._hasClickHandler = true;
+    }
+
+    // 绑定添加按钮事件（切换下拉菜单）
+    if (addBtn && !addBtn._hasClickHandler) {
+      addBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._toggleParticipantsDropdown();
+      });
+      addBtn._hasClickHandler = true;
+    }
+
+    // 点击其他地方关闭下拉菜单
+    if (!this._dropdownClickHandler) {
+      document.addEventListener('click', () => {
+        this._closeParticipantsDropdown();
+      });
+      this._dropdownClickHandler = true;
+    }
+  },
+
+  // 切换参与者下拉菜单
+  _toggleParticipantsDropdown() {
+    const compactEl = document.querySelector('.participants-compact');
+    const dropdownEl = document.getElementById('participantsDropdown');
+
+    if (compactEl && dropdownEl) {
+      const isOpen = compactEl.classList.contains('is-dropdown-open');
+      if (isOpen) {
+        compactEl.classList.remove('is-dropdown-open');
+      } else {
+        compactEl.classList.add('is-dropdown-open');
+      }
+    }
+  },
+
+  // 关闭参与者下拉菜单
+  _closeParticipantsDropdown() {
+    const compactEl = document.querySelector('.participants-compact');
+    if (compactEl) {
+      compactEl.classList.remove('is-dropdown-open');
+    }
+  },
+
+  // 添加参与者到公共聊天室
+  _addParticipant(connId) {
+    console.log('[UI] _addParticipant 被调用，connId:', connId);
+
+    if (!window.connectionManager) return;
+
+    const conn = window.connectionManager.getConnection(connId);
+    if (!conn) return;
+
+    // 添加到房间管理器
+    if (window.roomManager) {
+      window.roomManager.addParticipant(connId);
+      console.log('[UI] 已将', conn.name, '加入房间');
+
+      // 更新参与者显示
+      this._updateParticipantsDisplay();
+    }
+  },
+
+  // 移除单个参与者（从公共聊天室移除，不删除连接）
+  _removeParticipant(connId) {
+    console.log('[UI] _removeParticipant 被调用，connId:', connId);
+
+    if (!window.connectionManager) {
+      console.error('[UI] connectionManager 不存在');
+      return;
+    }
+
+    const conn = window.connectionManager.getConnection(connId);
+    if (!conn) {
+      console.error('[UI] 连接不存在:', connId);
+      return;
+    }
+
+    console.log('[UI] 准备从公共聊天室移除:', conn.name);
+
+    // 只从房间管理器中移除参与者，不删除连接
+    if (window.roomManager) {
+      window.roomManager.removeParticipant(connId);
+      console.log('[UI] 已从房间移除参与者');
+
+      // 更新参与者显示
+      this._updateParticipantsDisplay();
+    }
+  },
+
+  // 移除所有参与者（从公共聊天室移除，不删除连接）
+  _removeAllParticipants() {
+    if (!window.connectionManager) return;
+
+    const participants = window.connectionManager.getParticipants();
+    if (participants.length === 0) return;
+
+    // 只从房间管理器中清空参与者，不删除连接
+    if (window.roomManager) {
+      window.roomManager.participantIds.clear();
+      console.log('[UI] 已从房间移除所有参与者');
+
+      // 更新参与者显示
+      this._updateParticipantsDisplay();
+    }
+  },
+
+  // 更新房间状态栏（用于连接状态变化时）
+  _updateRoomStatusBar() {
+    const roomStatusBar = document.getElementById('roomStatusBar');
+    if (roomStatusBar && roomStatusBar.style.display !== 'none') {
+      this._updateParticipantsDisplay();
+    }
   },
 
   _renderRoomMessages() {
@@ -466,6 +706,25 @@ const UIManager = {
   },
 
   // ========== 辅助方法 ==========
+
+  // 更新循环状态 UI
+  _updateLoopStatusUI() {
+    const statusDiv = document.getElementById('loopStatus');
+    const roundsSpan = document.getElementById('loopRounds');
+
+    if (!window.roomManager) return;
+
+    const loop = window.roomManager.conversationLoop;
+
+    console.log('[UI] _updateLoopStatusUI - isActive:', loop.isActive, 'currentRound:', loop.currentRound);
+
+    if (loop.isActive) {
+      statusDiv.style.display = 'flex';
+      roundsSpan.textContent = `轮数: ${loop.currentRound}/${loop.maxRounds}`;
+    } else {
+      statusDiv.style.display = 'none';
+    }
+  },
 
   _escapeHtml(text) {
     const div = document.createElement('div');

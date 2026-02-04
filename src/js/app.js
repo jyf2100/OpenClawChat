@@ -10,70 +10,6 @@ function generateUUID() {
   return `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function formatTime(ts) {
-  const date = new Date(ts);
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function extractText(message) {
-  const content = message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const parts = [];
-    const toolCalls = [];
-
-    // 遍历所有内容块
-    for (const item of content) {
-      // 提取文本内容
-      if (item?.type === "text" && typeof item.text === "string") {
-        parts.push(item.text);
-      }
-      // 提取工具调用信息
-      if (item?.type === "tool_use" || item?.type === "toolCall") {
-        toolCalls.push({
-          name: item.name || item.id || 'tool',
-          input: item.input || item.arguments || {},
-        });
-      }
-      // 提取工具结果
-      if (item?.type === "tool_result" || item?.type === "toolResult") {
-        const toolName = item.name || item.tool_use_id || 'tool';
-        let resultText = '';
-
-        if (typeof item.content === "string") {
-          resultText = item.content;
-        } else if (Array.isArray(item.content)) {
-          resultText = item.content
-            .map(c => c?.type === 'text' ? c.text : '')
-            .filter(Boolean)
-            .join('\n');
-        } else if (item.content) {
-          resultText = JSON.stringify(item.content, null, 2);
-        }
-
-        parts.push(`**工具:** \`${toolName}\`\n${resultText}`);
-      }
-    }
-
-    let result = parts.join("\n");
-
-    // 如果有工具调用，添加到结果前
-    if (toolCalls.length > 0) {
-      const toolInfo = toolCalls.map(tc => {
-        const args = JSON.stringify(tc.input, null, 2);
-        return `**调用工具:** \`${tc.name}\`\n\`\`\`json\n${args}\n\`\`\``;
-      }).join('\n\n');
-      result = toolInfo + '\n\n' + result;
-    }
-
-    return result || parts.join("\n");
-  }
-  if (typeof message?.text === "string") return message.text;
-  return "";
-}
-
 function guessMime(path) {
   const lower = String(path || "").toLowerCase();
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
@@ -525,7 +461,8 @@ async function handleSend(overrideMessage, restoreDraft) {
   if (!message && !hasAttachments) return;
 
   // 检查是否在房间模式
-  const isInRoomMode = document.getElementById('roomControls')?.style.display !== 'none';
+  const roomStatusBar = document.getElementById('roomStatusBar');
+  const isInRoomMode = roomStatusBar && roomStatusBar.style.display === 'flex';
 
   if (isInRoomMode) {
     // 房间模式：使用 handleRoomSend
@@ -589,12 +526,28 @@ async function handleRoomSend(message, attachments) {
     }
   }
 
+  // ========== 将 @ 提及的 AI 添加到参与者列表 ==========
+  if (mentionedIds.length > 0 && window.roomManager) {
+    mentionedIds.forEach(connId => {
+      window.roomManager.addParticipant(connId);
+    });
+    console.log('[handleRoomSend] 已将 @ 提及的 AI 添加到参与者列表:', mentionedIds);
+
+    // 更新 UI 显示
+    if (window.UIManager._updateParticipantsDisplay) {
+      window.UIManager._updateParticipantsDisplay();
+    }
+  }
+
   // 路由消息
   try {
+    const aiEnabled = window.roomManager.aiInteractionEnabled;
+    console.log('[handleRoomSend] AI 交互模式状态:', aiEnabled);
+
     const results = await window.messageRouter.routeMessage(messageToSend, {
       mentions: mentionedIds,
       forceReconnect: true,
-      includeContext: window.roomManager.aiInteractionEnabled
+      includeContext: aiEnabled
     });
 
     // 显示结果
@@ -602,6 +555,45 @@ async function handleRoomSend(message, attachments) {
       if (!result.success) {
         setHint(`"${result.connName}" 发送失败: ${result.error}`);
       }
+    }
+
+    // ========== 对话循环启动逻辑 ==========
+    console.log('[handleRoomSend] 检查对话循环状态...');
+    console.log('[handleRoomSend] - enabled:', window.roomManager.conversationLoop.enabled);
+    console.log('[handleRoomSend] - isActive:', window.roomManager.conversationLoop.isActive);
+
+    if (window.roomManager.conversationLoop.enabled &&
+        !window.roomManager.conversationLoop.isActive) {
+      // 确定参与者
+      const participants = mentionedIds.length > 0
+        ? mentionedIds
+        : window.connectionManager.getParticipants().map(c => c.id);
+
+      console.log('[handleRoomSend] 尝试启动对话循环，参与者:', participants);
+
+      if (participants.length >= 2) {
+        const started = window.roomManager.startConversationLoop(messageToSend, participants);
+        if (started) {
+          console.log('[handleRoomSend] 对话循环已启动');
+          setHint('对话循环已启动，将在 AI 回复后自动继续');
+          setTimeout(() => setHint(''), 3000);
+
+          // 更新 UI 状态
+          if (window.UIManager._updateLoopStatusUI) {
+            window.UIManager._updateLoopStatusUI();
+          }
+        } else {
+          console.log('[handleRoomSend] 对话循环启动失败');
+          setHint('对话循环启动失败');
+          setTimeout(() => setHint(''), 3000);
+        }
+      } else {
+        console.log('[handleRoomSend] 参与者不足，需要至少 2 个 AI');
+        setHint('对话循环需要至少 2 个 AI');
+        setTimeout(() => setHint(''), 3000);
+      }
+    } else {
+      console.log('[handleRoomSend] 跳过对话循环启动');
     }
   } catch (error) {
     setHint(`发送失败: ${error.message}`);

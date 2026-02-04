@@ -5,6 +5,19 @@ class RoomManager {
     this.messages = [];
     this.aiInteractionEnabled = false;
     this.participantIds = new Set();  // 参与的连接 ID
+
+    // 新增: 对话循环状态
+    this.conversationLoop = {
+      enabled: false,           // 是否启用对话循环
+      isActive: false,          // 是否正在进行中
+      currentRound: 0,          // 当前轮数 (0-10)
+      maxRounds: 10,           // 最大轮数
+      participants: [],         // 参与 AI 的 ID 列表
+      currentSpeakerIndex: 0,   // 当前发言者索引
+      lastSpeakerId: null,      // 上一个发言的 AI ID
+      startTime: null,          // 开始时间
+      autoStop: false          // 自动停止标志
+    };
   }
 
   // 初始化
@@ -59,12 +72,18 @@ class RoomManager {
       // 回退到直接使用 localStorage
       const enabled = localStorage.getItem('roclaw.room.ai_interaction');
       this.aiInteractionEnabled = enabled === 'true';
+      console.log('[RoomManager] 从 localStorage 加载 AI 交互状态:', this.aiInteractionEnabled, '(原始值:', enabled, ')');
     }
+
+    // 加载对话循环状态
+    this._loadLoopState();
   }
 
   // 切换 AI 交互模式
   toggleAIInteraction() {
+    const oldValue = this.aiInteractionEnabled;
     this.aiInteractionEnabled = !this.aiInteractionEnabled;
+    console.log('[RoomManager] toggleAIInteraction:', oldValue, '->', this.aiInteractionEnabled);
 
     if (window.Storage) {
       const settings = window.Storage.getRoomSettings();
@@ -73,6 +92,7 @@ class RoomManager {
     } else {
       // 回退到直接使用 localStorage
       localStorage.setItem('roclaw.room.ai_interaction', String(this.aiInteractionEnabled));
+      console.log('[RoomManager] 已保存到 localStorage:', this.aiInteractionEnabled);
     }
 
     return this.aiInteractionEnabled;
@@ -127,6 +147,8 @@ class RoomManager {
     // 获取最近的房间消息
     const recentMessages = this.getRecentMessages(30);
 
+    console.log('[AI Context] 构建上下文，消息数量:', recentMessages.length);
+
     // 构建上下文字符串
     const contextLines = [];
 
@@ -147,7 +169,157 @@ class RoomManager {
     contextLines.push('');
     contextLines.push('=== 上下文结束 ===');
 
-    return contextLines.join('\n');
+    const context = contextLines.join('\n');
+    console.log('[AI Context] 上下文内容:', context);
+
+    return context;
+  }
+
+  // ========== 对话循环功能 ==========
+
+  // 启动对话循环
+  startConversationLoop(initialMessage, participantIds) {
+    if (!this.conversationLoop.enabled || this.conversationLoop.isActive) {
+      console.log('[RoomManager] 无法启动循环: enabled=', this.conversationLoop.enabled, 'isActive=', this.conversationLoop.isActive);
+      return false;
+    }
+
+    const participants = participantIds.length > 0
+      ? participantIds
+      : Array.from(this.participantIds);
+
+    if (participants.length < 2) {
+      console.log('[RoomManager] 参与者不足，需要至少 2 个，当前:', participants.length);
+      return false;
+    }
+
+    console.log('[RoomManager] 启动对话循环，参与者:', participants);
+
+    this.conversationLoop = {
+      ...this.conversationLoop,
+      isActive: true,
+      currentRound: 1,
+      participants,
+      currentSpeakerIndex: 0,
+      lastSpeakerId: null,
+      startTime: Date.now()
+    };
+
+    this._saveLoopState();
+    return true;
+  }
+
+  // 停止对话循环
+  stopConversationLoop(reason = 'manual') {
+    if (!this.conversationLoop.isActive) {
+      console.log('[RoomManager] 循环未激活，无需停止');
+      return false;
+    }
+
+    console.log('[RoomManager] 停止对话循环，原因:', reason);
+
+    this.conversationLoop.isActive = false;
+    this.conversationLoop.autoStop = reason !== 'manual';
+    this._saveLoopState();
+    return true;
+  }
+
+  // 获取下一个发言者
+  getNextSpeaker() {
+    if (!this.conversationLoop.isActive) {
+      console.log('[RoomManager] 循环未激活，无法获取下一个发言者');
+      return null;
+    }
+
+    const { participants, currentSpeakerIndex } = this.conversationLoop;
+    const nextIndex = (currentSpeakerIndex + 1) % participants.length;
+
+    console.log('[RoomManager] 当前索引:', currentSpeakerIndex, '下一个索引:', nextIndex);
+
+    // 当回到第一个参与者时，轮数加 1
+    if (nextIndex === 0) {
+      this.conversationLoop.currentRound++;
+      console.log('[RoomManager] 新轮数:', this.conversationLoop.currentRound);
+
+      if (this.conversationLoop.currentRound > this.conversationLoop.maxRounds) {
+        console.log('[RoomManager] 达到最大轮数，停止循环');
+        this.stopConversationLoop('max_rounds');
+        return null;
+      }
+    }
+
+    this.conversationLoop.currentSpeakerIndex = nextIndex;
+    this.conversationLoop.lastSpeakerId = participants[nextIndex];
+    this._saveLoopState();
+
+    const nextSpeaker = participants[nextIndex];
+    console.log('[RoomManager] 下一个发言者:', nextSpeaker);
+    return nextSpeaker;
+  }
+
+  // 检查是否应该继续循环
+  shouldContinueLoop(currentSpeakerId, messageContent) {
+    if (!this.conversationLoop.isActive) {
+      console.log('[RoomManager] 循环未激活');
+      return false;
+    }
+
+    if (this.conversationLoop.currentRound >= this.conversationLoop.maxRounds) {
+      console.log('[RoomManager] 达到最大轮数，停止循环');
+      this.stopConversationLoop('max_rounds');
+      return false;
+    }
+
+    return true;
+  }
+
+  // 重置循环状态（用于错误情况）
+  resetLoopState() {
+    this.conversationLoop.isActive = false;
+    this.conversationLoop.currentRound = 0;
+    this.conversationLoop.currentSpeakerIndex = 0;
+    this.conversationLoop.lastSpeakerId = null;
+    this.conversationLoop.startTime = null;
+    this.conversationLoop.autoStop = false;
+    this._saveLoopState();
+  }
+
+  // ========== 持久化方法 ==========
+
+  // 保存循环状态到 localStorage
+  _saveLoopState() {
+    try {
+      const stateToSave = {
+        enabled: this.conversationLoop.enabled,
+        // 不保存 isActive，刷新页面后重置为 false
+        maxRounds: this.conversationLoop.maxRounds
+      };
+      localStorage.setItem('roclaw.room.conversation_loop', JSON.stringify(stateToSave));
+      console.log('[RoomManager] 已保存循环状态:', stateToSave);
+    } catch (error) {
+      console.error('[RoomManager] 保存循环状态失败:', error);
+    }
+  }
+
+  // 从 localStorage 加载循环状态
+  _loadLoopState() {
+    try {
+      const data = localStorage.getItem('roclaw.room.conversation_loop');
+      if (data) {
+        const parsed = JSON.parse(data);
+        this.conversationLoop.enabled = parsed.enabled || false;
+        this.conversationLoop.maxRounds = parsed.maxRounds || 10;
+        // 重置活动状态，刷新页面后不自动继续
+        this.conversationLoop.isActive = false;
+        this.conversationLoop.currentRound = 0;
+        console.log('[RoomManager] 已加载循环状态:', {
+          enabled: this.conversationLoop.enabled,
+          maxRounds: this.conversationLoop.maxRounds
+        });
+      }
+    } catch (error) {
+      console.error('[RoomManager] 加载循环状态失败:', error);
+    }
   }
 }
 
