@@ -135,6 +135,20 @@ const wxCompat = {
 // 替换全局 wx 对象
 window.wx = wxCompat;
 
+// 配置 marked.js 选项
+if (typeof marked !== 'undefined') {
+  marked.setOptions({
+    breaks: true,        // 支持 GitHub 风格的换行
+    gfm: true,           // 启用 GitHub 风格 Markdown
+    headerIds: true,     // 为标题添加 ID
+    mangle: false,       // 不混淆 email 地址
+    highlight: function(code, lang) {
+      // 代码高亮由 highlight.js 处理
+      return code;
+    }
+  });
+}
+
 // 应用状态
 let state = {
   gatewayUrl: DEFAULTS.gatewayUrl,
@@ -280,10 +294,29 @@ function renderMessage(msg) {
   const bubble = document.createElement('div');
   bubble.className = `bubble ${msg.streaming ? 'streaming' : ''}`;
 
-  const text = document.createElement('span');
-  text.className = 'text';
-  text.textContent = msg.text;
-  bubble.appendChild(text);
+  // 对 assistant 和 tool 角色的消息进行 Markdown 渲染
+  if (msg.role === 'assistant' || msg.role === 'tool') {
+    const textDiv = document.createElement('div');
+    textDiv.className = 'text markdown-content';
+
+    if (msg.text) {
+      // 使用 marked.js 解析 Markdown
+      const html = marked.parse(msg.text);
+      textDiv.innerHTML = html;
+
+      // 对代码块进行语法高亮
+      textDiv.querySelectorAll('pre code').forEach((block) => {
+        hljs.highlightElement(block);
+      });
+    }
+    bubble.appendChild(textDiv);
+  } else {
+    // 用户消息保持纯文本
+    const text = document.createElement('span');
+    text.className = 'text';
+    text.textContent = msg.text;
+    bubble.appendChild(text);
+  }
 
   if (msg.loading) {
     const loading = document.createElement('div');
