@@ -33,7 +33,7 @@ class MessageRouter {
 
   // 路由消息到目标连接
   async routeMessage(message, options = {}) {
-    const { mentions = [], forceReconnect = false } = options;
+    const { mentions = [], forceReconnect = false, includeContext = false } = options;
 
     let targets;
 
@@ -61,7 +61,7 @@ class MessageRouter {
           }
         }
 
-        await this._sendToConnection(conn, message);
+        await this._sendToConnection(conn, message, { includeContext });
         results.push({ success: true, connId: conn.id, connName: conn.name });
       } catch (error) {
         results.push({ success: false, connId: conn.id, connName: conn.name, error: error.message });
@@ -72,13 +72,20 @@ class MessageRouter {
   }
 
   // 发送消息到单个连接
-  async _sendToConnection(conn, message) {
+  async _sendToConnection(conn, message, options = {}) {
     const state = this.connectionManager.connectionStates.get(conn.id);
     if (!state || !state.ws) {
       throw new Error('连接未建立');
     }
 
     const requestId = this._generateRequestId();
+
+    // 如果启用了 AI 交互模式，添加上下文
+    let finalMessage = message;
+    if (options.includeContext && window.roomManager) {
+      const context = window.roomManager.buildContextForConnection(conn.id);
+      finalMessage = `${context}\n\n当前问题: ${message}`;
+    }
 
     return new Promise((resolve, reject) => {
       state.pending.set(requestId, { resolve, reject });
@@ -89,7 +96,7 @@ class MessageRouter {
         method: 'chat.send',
         params: {
           sessionKey: conn.sessionKey,
-          message: message,
+          message: finalMessage,
           deliver: false,
           idempotencyKey: requestId
         }

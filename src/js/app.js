@@ -593,7 +593,8 @@ async function handleRoomSend(message, attachments) {
   try {
     const results = await window.messageRouter.routeMessage(messageToSend, {
       mentions: mentionedIds,
-      forceReconnect: true
+      forceReconnect: true,
+      includeContext: window.roomManager.aiInteractionEnabled
     });
 
     // 显示结果

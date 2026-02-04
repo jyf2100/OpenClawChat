@@ -96,6 +96,34 @@ class RoomManager {
     this.messages = [];
     this.saveMessages();
   }
+
+  // 为特定连接构建上下文
+  buildContextForConnection(connId) {
+    // 获取最近的房间消息
+    const recentMessages = this.getRecentMessages(30);
+
+    // 构建上下文字符串
+    const contextLines = [];
+
+    contextLines.push('=== 公共聊天房间上下文 ===');
+    contextLines.push('');
+
+    for (const msg of recentMessages) {
+      const sender = msg.senderName || '未知';
+      const content = msg.content || '';
+
+      if (msg.senderType === 'user') {
+        contextLines.push(`${sender}: ${content}`);
+      } else if (msg.senderType === 'ai' || msg.senderType === 'assistant') {
+        contextLines.push(`${sender} (AI): ${content}`);
+      }
+    }
+
+    contextLines.push('');
+    contextLines.push('=== 上下文结束 ===');
+
+    return contextLines.join('\n');
+  }
 }
 
 // 导出到全局
