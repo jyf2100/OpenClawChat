@@ -54,6 +54,22 @@
 
         </div>
 
+        <!-- 房间控制面板（仅在公共聊天模式显示） -->
+        <div class="room-controls" id="roomControls" style="display: none;">
+          <div class="room-participants">
+            <span class="participants-label">参与中:</span>
+            <div class="participant-list" id="participantList">
+              <!-- 参与者将通过 JS 动态插入 -->
+            </div>
+          </div>
+          <div class="room-settings">
+            <label class="interaction-switch">
+              <input type="checkbox" id="aiInteractionToggle">
+              <span>AI 交互模式</span>
+            </label>
+          </div>
+        </div>
+
         <!-- 聊天区域 -->
         <div class="chat-thread" id="chatThread">
           <!-- 消息将通过 JS 动态插入 -->
