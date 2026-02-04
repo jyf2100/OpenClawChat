@@ -545,15 +545,111 @@ class ConnectionManager {
       return;
     }
 
-    // 如果是活跃连接，触发全局聊天事件处理
-    if (id === this.activeConnectionId && this.onChatEvent) {
-      this.onChatEvent(payload);
+    // 检查是否在房间模式
+    const isInRoomMode = document.getElementById('roomControls')?.style.display !== 'none';
+
+    if (isInRoomMode && window.roomManager) {
+      // 房间模式：将 AI 回复添加到房间
+      this._handleRoomChatEvent(id, payload, conn);
+    } else {
+      // 普通模式：原有逻辑
+      if (id === this.activeConnectionId && this.onChatEvent) {
+        this.onChatEvent(payload);
+      }
     }
 
     if (payload.state === 'delta' || payload.state === 'final' || payload.state === 'aborted' || payload.state === 'error') {
       // 更新消息缓存（在 final 状态时重新加载历史）
       if (payload.state === 'final') {
         // 在 app.js 的 handleChatEvent 中会加载历史消息
+      }
+    }
+  }
+
+  _handleRoomChatEvent(id, payload, conn) {
+    // 提取消息内容
+    const text = extractText(payload.message);
+
+    if (!text) return;
+
+    // 根据 payload.state 决定如何处理
+    if (payload.state === 'delta') {
+      // 流式更新：更新或创建临时消息
+      let tempMsg = this._tempRoomMessage;
+      if (!tempMsg) {
+        tempMsg = window.roomManager.addMessage({
+          senderId: conn.id,
+          senderName: conn.name,
+          senderType: 'ai',
+          content: text,
+          isStreaming: true
+        });
+        this._tempRoomMessage = tempMsg;
+
+        // 渲染消息
+        if (window.UIManager._renderRoomMessage) {
+          window.UIManager._renderRoomMessage(tempMsg);
+        }
+      } else {
+        // 更新现有消息
+        tempMsg.content = text;
+        const chatThread = document.getElementById('chatThread');
+        const line = document.getElementById(tempMsg.id);
+        if (line) {
+          const bubble = line.querySelector('.bubble .text');
+          if (bubble) {
+            bubble.textContent = text;
+          }
+        }
+      }
+    } else if (payload.state === 'final') {
+      // 最终消息：完成流式更新
+      if (this._tempRoomMessage) {
+        this._tempRoomMessage.content = text;
+        this._tempRoomMessage.isStreaming = false;
+        window.roomManager.saveMessages();
+
+        // 更新 UI（支持 Markdown）
+        const chatThread = document.getElementById('chatThread');
+        const line = document.getElementById(this._tempRoomMessage.id);
+        if (line) {
+          const bubble = line.querySelector('.bubble');
+          if (bubble) {
+            bubble.innerHTML = `<div class="text markdown-content">${marked.parse(text)}</div>`;
+            // 高亮代码块
+            bubble.querySelectorAll('pre code').forEach((block) => {
+              hljs.highlightElement(block);
+            });
+          }
+        }
+
+        this._tempRoomMessage = null;
+      } else {
+        // 创建新消息
+        const aiMsg = window.roomManager.addMessage({
+          senderId: conn.id,
+          senderName: conn.name,
+          senderType: 'ai',
+          content: text
+        });
+
+        if (window.UIManager._renderRoomMessage) {
+          window.UIManager._renderRoomMessage(aiMsg);
+        }
+      }
+
+      // 滚动到底部
+      const chatThread = document.getElementById('chatThread');
+      if (chatThread) {
+        chatThread.scrollTop = chatThread.scrollHeight;
+      }
+    } else if (payload.state === 'error') {
+      // 错误状态
+      if (this._tempRoomMessage) {
+        this._tempRoomMessage.content = `错误: ${text}`;
+        this._tempRoomMessage.isStreaming = false;
+        window.roomManager.saveMessages();
+        this._tempRoomMessage = null;
       }
     }
   }
