@@ -769,6 +769,9 @@ function init() {
   window.connectionManager = new ConnectionManager();
   window.connectionManager.init();
 
+  // ========== 初始化消息路由器 ==========
+  window.messageRouter = new MessageRouter(window.connectionManager);
+
   // 设置聊天事件回调
   window.connectionManager.onChatEvent = (payload) => {
     handleChatEvent(payload);
