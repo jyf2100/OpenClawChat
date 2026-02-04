@@ -1,0 +1,43 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "OpenClaw Chat",
+  "version": "0.1.0",
+  "identifier": "com.openclaw.chat",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "../src",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenClaw 对话",
+        "width": 900,
+        "height": 700,
+        "minWidth": 600,
+        "minHeight": 400,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Developer Tool",
+    "shortDescription": "OpenClaw AI 对话客户端",
+    "longDescription": "本地桌面应用，支持实时 AI 对话、流式响应、图片附件",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

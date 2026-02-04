@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenClaw 对话</title>
+  <link rel="stylesheet" href="styles/chat.css">
+</head>
+<body>
+  <div class="page">
+    <!-- 固定头部区域 -->
+    <div class="header-fixed">
+      <!-- 顶部导航栏 -->
+      <div class="topbar">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <span class="brand-title">OpenClaw 对话</span>
+        </div>
+        <div class="status" id="status">
+          <div class="status-dot"></div>
+          <span class="status-text" id="statusText">未连接</span>
+        </div>
+      </div>
+
+      <!-- 设置面板标题栏 -->
+      <div class="settings-bar" id="settingsBar">
+        <div class="settings-left">
+          <span class="settings-title">设置</span>
+          <span class="settings-status" id="settingsStatus" style="display: none;">已连接</span>
+        </div>
+        <div class="settings-arrow" id="settingsArrow">
+          <span>▼</span>
+        </div>
+      </div>
+
+      <!-- 设置面板内容（可折叠） -->
+      <div class="panel-absolute" id="settingsPanel" style="display: none;">
+        <div class="field">
+          <span class="label">网关 WS</span>
+          <input class="input" id="gatewayUrl" placeholder="ws://127.0.0.1:18789" />
+        </div>
+        <div class="field">
+          <span class="label">令牌</span>
+          <input class="input" id="token" type="password" placeholder="可选" />
+        </div>
+        <div class="field">
+          <span class="label">会话</span>
+          <input class="input" id="sessionKey" placeholder="agent:main:main" />
+        </div>
+        <div class="panel-actions">
+          <button class="btn" id="connectBtn">连接</button>
+          <button class="btn btn-ghost" id="refreshBtn" disabled>刷新</button>
+        </div>
+        <span class="hint" id="hint" style="display: none;"></span>
+      </div>
+    </div>
+
+    <!-- 聊天区域 -->
+    <div class="chat-thread" id="chatThread">
+      <!-- 消息将通过 JS 动态插入 -->
+    </div>
+
+    <!-- 排队消息 -->
+    <div class="queue" id="queue" style="display: none;">
+      <span class="queue-title">排队中 (<span id="queueCount">0</span>)</span>
+      <div class="queue-list" id="queueList">
+        <!-- 队列项将通过 JS 动态插入 -->
+      </div>
+    </div>
+
+    <!-- 底部输入栏 -->
+    <div class="compose-fixed">
+      <!-- 附件预览 -->
+      <div class="attachments" id="attachments"></div>
+
+      <!-- 输入框 -->
+      <div class="input-wrapper">
+        <textarea
+          class="textarea"
+          id="messageInput"
+          placeholder="输入消息..."
+          rows="1"
+        ></textarea>
+      </div>
+
+      <!-- 操作按钮 -->
+      <div class="compose-actions">
+        <button class="btn btn-ghost" id="chooseImageBtn">+</button>
+        <button class="btn btn-ghost" id="secondaryBtn">新会话</button>
+        <button class="send-btn" id="sendBtn">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

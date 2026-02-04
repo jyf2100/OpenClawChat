@@ -1,0 +1,20 @@
+{
+  "name": "openclaw-chat-desktop",
+  "version": "0.1.0",
+  "description": "OpenClaw AI 对话桌面客户端",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "keywords": ["chat", "ai", "tauri", "desktop"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1"
+  }
+}
