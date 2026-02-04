@@ -464,8 +464,11 @@ async function handleSend(overrideMessage, restoreDraft) {
   const roomStatusBar = document.getElementById('roomStatusBar');
   const isInRoomMode = roomStatusBar && roomStatusBar.style.display === 'flex';
 
+  console.log('[handleSend] roomStatusBar.display:', roomStatusBar?.style.display, 'isInRoomMode:', isInRoomMode);
+
   if (isInRoomMode) {
     // 房间模式：使用 handleRoomSend
+    console.log('[handleSend] 房间模式 -> 调用 handleRoomSend');
     await handleRoomSend(message, attachmentsToSend);
     if (overrideMessage == null) {
       elements.messageInput.value = "";
@@ -476,6 +479,7 @@ async function handleSend(overrideMessage, restoreDraft) {
   }
 
   // 普通模式：原有逻辑
+  console.log('[handleSend] 普通模式 -> state.connected:', state.connected, 'isBusy():', isBusy());
   if (!state.connected) return;
 
   if (isBusy()) {
@@ -740,12 +744,18 @@ async function abortChat() {
 // 处理聊天事件（通过 ConnectionManager）
 function handleChatEvent(payload) {
   const activeId = window.connectionManager?.activeConnectionId;
+  console.log('[handleChatEvent] 收到事件, activeId:', activeId, 'payload.state:', payload?.state);
+
   if (!activeId || !payload) return;
 
   const conn = window.connectionManager.getConnection(activeId);
-  if (!conn || payload.sessionKey !== conn.sessionKey) return;
+  if (!conn || payload.sessionKey !== conn.sessionKey) {
+    console.log('[handleChatEvent] 连接不存在或 sessionKey 不匹配');
+    return;
+  }
 
   if (payload.state === "delta") {
+    console.log('[handleChatEvent] delta 状态, 更新流式文本');
     const next = extractText(payload.message);
     const current = state.streamText || "";
     const updated = next.length >= current.length ? next : current;
@@ -755,6 +765,7 @@ function handleChatEvent(payload) {
   }
 
   if (payload.state === "final") {
+    console.log('[handleChatEvent] final 状态, 完成消息');
     state.streamText = null;
     state.runId = null;
     state.streamStartedAt = null;
@@ -766,6 +777,7 @@ function handleChatEvent(payload) {
   }
 
   if (payload.state === "aborted" || payload.state === "error") {
+    console.log('[handleChatEvent] aborted/error 状态, 重置');
     state.streamText = null;
     state.runId = null;
     state.streamStartedAt = null;
@@ -884,3 +896,9 @@ function init() {
 
 // 启动应用
 init();
+
+// 导出函数供 ConnectionManager 使用
+window.state = state;
+window.buildRenderedMessages = buildRenderedMessages;
+window.setStatus = setStatus;
+window.handleChatEvent = handleChatEvent;
