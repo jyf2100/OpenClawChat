@@ -1,6 +1,6 @@
 const DEFAULTS = {
-  gatewayUrl: "ws://47.252.93.109:18789",
-  token: "5742f447a7cc1f38499bf38628d02d27",
+  gatewayUrl: "ws://127.0.0.1:18789",
+  token: "XXXXXXXXX",
   sessionKey: "agent:main:main",
 };
 
