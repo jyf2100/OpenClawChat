@@ -22,9 +22,17 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
 
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -36,9 +44,7 @@ jobs:
         run: npm ci
 
       - name: Build app
-        run: cargo tauri build --target ${{ matrix.target }}
-        env:
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: npm run build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
