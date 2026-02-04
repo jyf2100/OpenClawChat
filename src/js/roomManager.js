@@ -15,41 +15,66 @@ class RoomManager {
 
   // 加载消息历史
   loadMessages() {
-    const data = localStorage.getItem('roclaw.room.messages');
-    if (data) {
-      try {
-        const parsed = JSON.parse(data);
-        this.messages = parsed.messages || [];
-      } catch (error) {
-        console.error('Failed to load room messages:', error);
-        this.messages = [];
+    if (window.Storage) {
+      this.messages = window.Storage.getRoomMessages();
+    } else {
+      // 回退到直接使用 localStorage
+      const data = localStorage.getItem('roclaw.room.messages');
+      if (data) {
+        try {
+          const parsed = JSON.parse(data);
+          this.messages = parsed.messages || [];
+        } catch (error) {
+          console.error('Failed to load room messages:', error);
+          this.messages = [];
+        }
       }
     }
   }
 
   // 保存消息
   saveMessages() {
-    try {
-      const data = {
-        messages: this.messages.slice(-500),  // 限制消息数量
-        updatedAt: Date.now()
-      };
-      localStorage.setItem('roclaw.room.messages', JSON.stringify(data));
-    } catch (error) {
-      console.error('Failed to save room messages:', error);
+    if (window.Storage) {
+      window.Storage.saveRoomMessages(this.messages);
+    } else {
+      // 回退到直接使用 localStorage
+      try {
+        const data = {
+          messages: this.messages.slice(-500),  // 限制消息数量
+          updatedAt: Date.now()
+        };
+        localStorage.setItem('roclaw.room.messages', JSON.stringify(data));
+      } catch (error) {
+        console.error('Failed to save room messages:', error);
+      }
     }
   }
 
   // 加载设置
   loadSettings() {
-    const enabled = localStorage.getItem('roclaw.room.ai_interaction');
-    this.aiInteractionEnabled = enabled === 'true';
+    if (window.Storage) {
+      const settings = window.Storage.getRoomSettings();
+      this.aiInteractionEnabled = settings.aiInteractionEnabled || false;
+    } else {
+      // 回退到直接使用 localStorage
+      const enabled = localStorage.getItem('roclaw.room.ai_interaction');
+      this.aiInteractionEnabled = enabled === 'true';
+    }
   }
 
   // 切换 AI 交互模式
   toggleAIInteraction() {
     this.aiInteractionEnabled = !this.aiInteractionEnabled;
-    localStorage.setItem('roclaw.room.ai_interaction', String(this.aiInteractionEnabled));
+
+    if (window.Storage) {
+      const settings = window.Storage.getRoomSettings();
+      settings.aiInteractionEnabled = this.aiInteractionEnabled;
+      window.Storage.saveRoomSettings(settings);
+    } else {
+      // 回退到直接使用 localStorage
+      localStorage.setItem('roclaw.room.ai_interaction', String(this.aiInteractionEnabled));
+    }
+
     return this.aiInteractionEnabled;
   }
 

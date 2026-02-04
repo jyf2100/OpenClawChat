@@ -6,6 +6,9 @@ const Storage = {
     ACTIVE_CONN: "openclaw.active_conn",
     MESSAGES_PREFIX: "openclaw.messages.",
     SCROLL_PREFIX: "openclaw.scroll.",
+    ROOM_MESSAGES: "roclaw.room.messages",
+    ROOM_SETTINGS: "roclaw.room.settings",
+    ROOM_ACTIVE: "roclaw.room.active",
   },
 
   // ========== 连接配置 ==========
@@ -205,6 +208,108 @@ const Storage = {
       localStorage.removeItem(this.KEYS.ACTIVE_CONN);
     } catch (error) {
       console.error('Failed to clear all data:', error);
+    }
+  },
+
+  // ========== 房间相关存储 ==========
+
+  // 获取房间消息
+  getRoomMessages() {
+    try {
+      const data = localStorage.getItem(this.KEYS.ROOM_MESSAGES);
+      if (data) {
+        const parsed = JSON.parse(data);
+        return parsed.messages || [];
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to load room messages:', error);
+      return [];
+    }
+  },
+
+  // 保存房间消息
+  saveRoomMessages(messages) {
+    try {
+      // 限制消息数量
+      const trimmed = messages.slice(-500);
+
+      // 清理旧消息（30天前）
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const filtered = trimmed.filter(m => (m.timestamp || 0) > thirtyDaysAgo);
+
+      const data = {
+        messages: filtered,
+        updatedAt: Date.now()
+      };
+
+      localStorage.setItem(this.KEYS.ROOM_MESSAGES, JSON.stringify(data));
+    } catch (error) {
+      console.error('Failed to save room messages:', error);
+    }
+  },
+
+  // 清空房间消息
+  clearRoomMessages() {
+    try {
+      localStorage.removeItem(this.KEYS.ROOM_MESSAGES);
+    } catch (error) {
+      console.error('Failed to clear room messages:', error);
+    }
+  },
+
+  // 获取房间设置
+  getRoomSettings() {
+    try {
+      const data = localStorage.getItem(this.KEYS.ROOM_SETTINGS);
+      if (data) {
+        return JSON.parse(data);
+      }
+      return {
+        aiInteractionEnabled: false,
+        theme: 'default'
+      };
+    } catch (error) {
+      console.error('Failed to load room settings:', error);
+      return {
+        aiInteractionEnabled: false,
+        theme: 'default'
+      };
+    }
+  },
+
+  // 保存房间设置
+  saveRoomSettings(settings) {
+    try {
+      const data = {
+        ...settings,
+        updatedAt: Date.now()
+      };
+      localStorage.setItem(this.KEYS.ROOM_SETTINGS, JSON.stringify(data));
+    } catch (error) {
+      console.error('Failed to save room settings:', error);
+    }
+  },
+
+  // 获取当前活跃的视图（连接或房间）
+  getActiveView() {
+    try {
+      const active = localStorage.getItem(this.KEYS.ROOM_ACTIVE);
+      return active || 'connection';
+    } catch {
+      return 'connection';
+    }
+  },
+
+  // 设置当前活跃的视图
+  setActiveView(view, id) {
+    try {
+      localStorage.setItem(this.KEYS.ROOM_ACTIVE, view);
+      if (view === 'connection' && id) {
+        this.setActiveConnection(id);
+      }
+    } catch (error) {
+      console.error('Failed to set active view:', error);
     }
   }
 };
