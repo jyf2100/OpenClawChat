@@ -833,6 +833,9 @@ function init() {
   // ========== 初始化消息路由器 ==========
   window.messageRouter = new MessageRouter(window.connectionManager);
 
+  // ========== 初始化 @提及补全 ==========
+  window.mentionAutocomplete = new MentionAutocomplete();
+
   // 设置聊天事件回调
   window.connectionManager.onChatEvent = (payload) => {
     handleChatEvent(payload);

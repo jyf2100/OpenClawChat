@@ -109,6 +109,11 @@
     </main>
   </div>
 
+  <!-- @提及补全菜单 -->
+  <div class="mention-suggestions" id="mentionSuggestions" style="display: none;">
+    <!-- 补全建议将通过 JS 动态插入 -->
+  </div>
+
   <!-- 连接编辑弹窗 -->
   <div class="modal-overlay" id="connModal" style="display: none;">
     <div class="modal">
@@ -173,6 +178,7 @@
   <script src="js/connectionManager.js"></script>
   <script src="js/roomManager.js"></script>
   <script src="js/messageRouter.js"></script>
+  <script src="js/mentionAutocomplete.js"></script>
   <script src="js/ui.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>

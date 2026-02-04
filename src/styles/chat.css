@@ -1339,3 +1339,67 @@
   width: 16px;
   height: 16px;
 }
+
+/* ============================================
+   @提及补全样式
+   ============================================ */
+
+.mention-suggestions {
+  position: fixed;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  z-index: 1000;
+  min-width: 180px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mention-suggestions::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mention-suggestions::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mention-suggestions::-webkit-scrollbar-thumb {
+  background: #d0d7de;
+  border-radius: 3px;
+}
+
+.mention-suggestion-item {
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #1f2328;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mention-suggestion-item:hover,
+.mention-suggestion-item.selected {
+  background: #f3f4f6;
+}
+
+.mention-suggestion-item .status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ccc;
+  flex-shrink: 0;
+}
+
+.mention-suggestion-item .status.connected {
+  background: #07c160;
+}
+
+.mention-suggestion-item .conn-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
