@@ -44,4 +44,4 @@ echo "等待服务启动..."
 sleep 30
 
 echo "恢复完成!"
-./scripts/status.sh
+./status.sh
