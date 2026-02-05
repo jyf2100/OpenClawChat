@@ -19,6 +19,7 @@ jobs:
             name: 'x86_64'
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
