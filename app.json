@@ -1,0 +1,12 @@
+{
+  "pages": ["pages/chat/chat"],
+  "window": {
+    "navigationBarTitleText": "OpenClaw 对话",
+    "navigationBarBackgroundColor": "#ededed",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#ededed",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

@@ -1,0 +1,139 @@
+<view class="page">
+  <!-- 固定头部区域 -->
+  <view class="header-fixed">
+    <!-- 顶部导航栏 -->
+    <view class="topbar">
+      <view class="brand">
+        <view class="brand-dot"></view>
+        <text class="brand-title">OpenClaw 对话</text>
+      </view>
+      <view class="status {{connected ? 'status--connected' : ''}}">
+        <view class="status-dot"></view>
+        <text class="status-text">{{statusText}}</text>
+      </view>
+    </view>
+
+    <!-- 设置面板标题栏 -->
+    <view class="settings-bar" bindtap="toggleSettings">
+      <view class="settings-left">
+        <text class="settings-title">设置</text>
+        <text class="settings-status" wx:if="{{connected}}">已连接</text>
+      </view>
+      <view class="settings-arrow {{settingsExpanded ? 'expanded' : ''}}">
+        <text>▼</text>
+      </view>
+    </view>
+
+    <!-- 设置面板内容（可折叠）- 绝对定位展开 -->
+    <view class="panel-absolute" wx:if="{{settingsExpanded}}">
+      <view class="field">
+        <text class="label">网关 WS</text>
+        <input class="input" value="{{gatewayUrl}}" placeholder="ws://127.0.0.1:18789" bindinput="onGatewayInput" />
+      </view>
+      <view class="field">
+        <text class="label">令牌</text>
+        <input class="input" value="{{token}}" password placeholder="可选" bindinput="onTokenInput" />
+      </view>
+      <view class="field">
+        <text class="label">会话</text>
+        <input class="input" value="{{sessionKey}}" placeholder="agent:main:main" bindinput="onSessionInput" />
+      </view>
+      <view class="panel-actions">
+        <button class="btn" bindtap="on连接">{{connectLabel}}</button>
+        <button class="btn btn-ghost" bindtap="onRefresh" disabled="{{!connected}}">刷新</button>
+      </view>
+      <text class="hint" wx:if="{{hint}}">{{hint}}</text>
+    </view>
+  </view>
+
+  <!-- 聊天区域 - 留出顶部和底部空间 -->
+  <scroll-view
+    class="chat-thread"
+    scroll-y
+    scroll-with-animation
+    scroll-into-view="{{scrollIntoView}}"
+    enhanced
+    show-scrollbar="{{false}}"
+  >
+    <block wx:for="{{renderedMessages}}" wx:key="id">
+      <view id="{{item.domId}}" class="chat-line {{item.role}}">
+        <!-- 头像 -->
+        <view class="avatar">{{item.avatar}}</view>
+        
+        <!-- 消息内容 -->
+        <view class="message-content">
+          <view class="bubble {{item.streaming ? 'streaming' : ''}}">
+            <text class="text" space="ensp">{{item.text}}</text>
+
+            <!-- 加载中 -->
+            <view wx:if="{{item.loading}}" class="loading">
+              <view class="loading-dots">
+                <view class="dot"></view>
+                <view class="dot"></view>
+                <view class="dot"></view>
+              </view>
+            </view>
+
+            <!-- 图片 -->
+            <view class="images" wx:if="{{item.images.length}}">
+              <image
+                wx:for="{{item.images}}"
+                wx:key="*this"
+                src="{{item}}"
+                mode="widthFix"
+                lazy-load
+              />
+            </view>
+          </view>
+          <!-- 时间戳 -->
+          <text class="meta">{{item.time}}</text>
+        </view>
+      </view>
+    </block>
+    
+    <!-- 底部占位，防止内容被底部输入栏遮挡 -->
+    <view class="chat-bottom-space"></view>
+  </scroll-view>
+
+  <!-- 排队消息 -->
+  <view class="queue" wx:if="{{queue.length}}">
+    <text class="queue-title">排队中 ({{queue.length}})</text>
+    <view class="queue-list">
+      <view class="queue-item" wx:for="{{queue}}" wx:key="id">
+        <text class="queue-text">{{item.text}}</text>
+        <view class="btn btn-mini" data-id="{{item.id}}" bindtap="onRemoveQueued">移除</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部输入栏 - 固定定位 -->
+  <view class="compose-fixed">
+    <!-- 附件预览 -->
+    <view class="attachments" wx:if="{{attachments.length}}">
+      <view class="attachment" wx:for="{{attachments}}" wx:key="id">
+        <image src="{{item.preview}}" mode="aspectFill" />
+        <view class="remove" data-id="{{item.id}}" bindtap="onRemoveAttachment">×</view>
+      </view>
+    </view>
+
+    <!-- 输入框 -->
+    <view class="input-wrapper">
+      <textarea
+        class="textarea"
+        value="{{messageDraft}}"
+        placeholder="输入消息..."
+        auto-height
+        bindinput="onMessageInput"
+        confirm-type="send"
+        hold-keyboard
+      />
+    </view>
+
+    <!-- 操作按钮 -->
+    <view class="compose-actions">
+      <view class="btn btn-ghost" bindtap="onChooseImage">+</view>
+      <view class="btn btn-ghost" bindtap="onSecondary">{{secondaryLabel}}</view>
+      <view class="send-btn {{connected ? '' : 'disabled'}}" bindtap="onSend">发送</view>
+    </view>
+  </view>
+</view>
