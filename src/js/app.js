@@ -749,8 +749,24 @@ function handleChatEvent(payload) {
   if (!activeId || !payload) return;
 
   const conn = window.connectionManager.getConnection(activeId);
-  if (!conn || payload.sessionKey !== conn.sessionKey) {
-    console.log('[handleChatEvent] 连接不存在或 sessionKey 不匹配');
+  if (!conn) {
+    console.log('[handleChatEvent] 连接不存在');
+    return;
+  }
+
+  // sessionKey 验证：检查原始或动态 sessionKey
+  let sessionKeyMatch = payload.sessionKey === conn.sessionKey;
+
+  // 在房间模式下，也检查动态 sessionKey
+  if (!sessionKeyMatch && window.roomManager) {
+    const dynamicKey = window.roomManager.getDynamicSessionKey(activeId);
+    if (dynamicKey && payload.sessionKey === dynamicKey) {
+      sessionKeyMatch = true;
+    }
+  }
+
+  if (!sessionKeyMatch) {
+    console.log('[handleChatEvent] sessionKey 不匹配');
     return;
   }
 

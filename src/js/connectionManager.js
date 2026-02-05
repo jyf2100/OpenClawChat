@@ -572,8 +572,21 @@ class ConnectionManager {
       console.warn('[ChatEvent] 连接不存在:', id);
       return;
     }
-    if (payload.sessionKey !== conn.sessionKey) {
-      console.warn('[ChatEvent] sessionKey 不匹配');
+
+    // sessionKey 验证：检查原始或动态 sessionKey
+    let sessionKeyMatch = payload.sessionKey === conn.sessionKey;
+
+    // 在房间模式下，也检查动态 sessionKey
+    if (!sessionKeyMatch && window.roomManager) {
+      const dynamicKey = window.roomManager.getDynamicSessionKey(id);
+      if (dynamicKey && payload.sessionKey === dynamicKey) {
+        sessionKeyMatch = true;
+        console.log('[ChatEvent] 使用动态 sessionKey 验证通过');
+      }
+    }
+
+    if (!sessionKeyMatch) {
+      console.warn('[ChatEvent] sessionKey 不匹配, payload:', payload.sessionKey, 'conn:', conn.sessionKey);
       return;
     }
 

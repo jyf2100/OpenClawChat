@@ -75,6 +75,8 @@
                     <button class="btn btn-mini" id="stopLoopBtn">停止</button>
                   </div>
                 </div>
+                <!-- 重置会话按钮：放在右侧最前面 -->
+                <button class="btn btn-mini" id="resetAllSessionsBtn" title="重置所有 AI 的会话上下文">重置会话</button>
               </div>
               <!-- 连接状态（始终显示） -->
               <div class="status" id="status">
@@ -179,6 +181,24 @@
       <div class="modal-footer">
         <button class="btn btn-ghost" id="deleteModalCancel">取消</button>
         <button class="btn btn-danger" id="deleteModalConfirm">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 重置会话确认弹窗 -->
+  <div class="modal-overlay" id="resetSessionsModal" style="display: none;">
+    <div class="modal" style="max-width: 400px;">
+      <div class="modal-header">
+        <span class="modal-title">重置会话</span>
+        <button class="modal-close" id="resetSessionsModalClose">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom: 16px;">确定要重置所有 AI 的会话并清空消息记录吗？</p>
+        <p style="color: #d29922; font-size: 14px;">⚠️ 此操作将清除所有 AI 的会话上下文和聊天记录。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="resetSessionsModalCancel">取消</button>
+        <button class="btn btn-danger" id="resetSessionsModalConfirm">确定重置</button>
       </div>
     </div>
   </div>

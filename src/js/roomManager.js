@@ -6,6 +6,10 @@ class RoomManager {
     this.aiInteractionEnabled = false;
     this.participantIds = new Set();  // 参与的连接 ID
 
+    // 新增: sessionKey 映射（用于会话隔离）
+    // key: connId, value: { original, dynamic, timestamp }
+    this.sessionKeyMap = new Map();
+
     // 新增: 对话循环状态
     this.conversationLoop = {
       enabled: false,           // 是否启用对话循环
@@ -24,6 +28,111 @@ class RoomManager {
   init() {
     this.loadMessages();
     this.loadSettings();
+    this.loadSessionKeys();
+  }
+
+  // ========== SessionKey 管理（会话隔离）==========
+
+  // 加载 sessionKey 映射
+  loadSessionKeys() {
+    if (window.Storage) {
+      const data = window.Storage.getRoomSessionKeys();
+      this.sessionKeyMap = new Map(Object.entries(data));
+      console.log('[RoomManager] 已加载 sessionKey 映射:', this.sessionKeyMap.size, '条');
+    } else {
+      // 回退到直接使用 localStorage
+      try {
+        const data = localStorage.getItem('roclaw.room.sessionKeys');
+        if (data) {
+          const parsed = JSON.parse(data);
+          this.sessionKeyMap = new Map(Object.entries(parsed));
+        }
+      } catch (error) {
+        console.error('[RoomManager] 加载 sessionKey 映射失败:', error);
+      }
+    }
+  }
+
+  // 保存 sessionKey 映射
+  saveSessionKeys() {
+    if (window.Storage) {
+      const obj = Object.fromEntries(this.sessionKeyMap);
+      window.Storage.saveRoomSessionKeys(obj);
+    } else {
+      // 回退到直接使用 localStorage
+      try {
+        const obj = Object.fromEntries(this.sessionKeyMap);
+        localStorage.setItem('roclaw.room.sessionKeys', JSON.stringify(obj));
+      } catch (error) {
+        console.error('[RoomManager] 保存 sessionKey 映射失败:', error);
+      }
+    }
+  }
+
+  // 生成动态 sessionKey
+  generateDynamicSessionKey(originalSessionKey) {
+    const parts = originalSessionKey.split(':');
+    if (parts.length !== 3) {
+      console.warn('[RoomManager] sessionKey 格式无效:', originalSessionKey);
+      return originalSessionKey;
+    }
+
+    const [, appid] = parts;
+    const newSessionId = Date.now().toString();
+    return `${parts[0]}:${appid}:${newSessionId}`;
+  }
+
+  // 重写 addParticipant 方法，添加动态 sessionKey 生成
+  addParticipant(connId) {
+    const conn = window.connectionManager?.getConnection(connId);
+    if (!conn) {
+      console.warn('[RoomManager] 连接不存在:', connId);
+      return false;
+    }
+
+    // 如果还没有为此连接生成动态 sessionKey，则生成一个
+    if (!this.sessionKeyMap.has(connId)) {
+      const dynamicKey = this.generateDynamicSessionKey(conn.sessionKey);
+      this.sessionKeyMap.set(connId, {
+        original: conn.sessionKey,
+        dynamic: dynamicKey,
+        timestamp: Date.now()
+      });
+      this.saveSessionKeys();
+      console.log('[RoomManager] 为连接', conn.name, '生成动态 sessionKey:', dynamicKey);
+    }
+
+    this.participantIds.add(connId);
+    return true;
+  }
+
+  // 获取动态 sessionKey
+  getDynamicSessionKey(connId) {
+    const mapping = this.sessionKeyMap.get(connId);
+    return mapping ? mapping.dynamic : null;
+  }
+
+  // 重置所有会话密钥
+  resetAllSessionKeys() {
+    let count = 0;
+    for (const connId of this.participantIds) {
+      const mapping = this.sessionKeyMap.get(connId);
+      if (mapping) {
+        const newDynamic = this.generateDynamicSessionKey(mapping.original);
+        mapping.dynamic = newDynamic;
+        mapping.timestamp = Date.now();
+        count++;
+      }
+    }
+    this.saveSessionKeys();
+    console.log('[RoomManager] 已重置', count, '个会话密钥');
+    return count;
+  }
+
+  // 获取原始 sessionKey
+  getOriginalSessionKey(connId) {
+    const mapping = this.sessionKeyMap.get(connId);
+    return mapping ? mapping.original : null;
   }
 
   // 加载消息历史
@@ -119,11 +228,6 @@ class RoomManager {
   // 获取最近的消息（用于构建 AI 上下文）
   getRecentMessages(limit = 20) {
     return this.messages.slice(-limit);
-  }
-
-  // 添加参与者
-  addParticipant(connId) {
-    this.participantIds.add(connId);
   }
 
   // 移除参与者

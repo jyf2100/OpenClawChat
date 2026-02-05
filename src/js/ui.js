@@ -311,6 +311,57 @@ const UIManager = {
     });
   },
 
+  // 显示重置会话确认模态框
+  _showResetSessionsModal() {
+    const modal = document.getElementById('resetSessionsModal');
+    const confirmBtn = document.getElementById('resetSessionsModalConfirm');
+    const cancelBtn = document.getElementById('resetSessionsModalCancel');
+    const closeBtn = document.getElementById('resetSessionsModalClose');
+
+    if (!modal) return;
+
+    // 显示弹窗
+    modal.style.display = 'flex';
+
+    // 绑定事件
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    const newCloseBtn = closeBtn.cloneNode(true);
+
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+
+    // 确认重置
+    newConfirmBtn.addEventListener('click', () => {
+      try {
+        // 重置所有会话密钥
+        const count = window.roomManager.resetAllSessionKeys();
+
+        // 清空消息记录
+        window.roomManager.clearMessages();
+
+        // 重新渲染消息列表
+        this._renderRoomMessages();
+
+        this._showHint(`已重置 ${count} 个 AI 的会话并清空消息`, 3000);
+      } catch (error) {
+        this._showHint('重置失败：' + error.message, 3000);
+      }
+      modal.style.display = 'none';
+    });
+
+    // 取消重置
+    newCancelBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+
+    // 关闭按钮
+    newCloseBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  },
+
   // ========== 状态更新 ==========
 
   updateConnectionStatus(connId, status) {
@@ -418,6 +469,27 @@ const UIManager = {
       });
       stopBtn._hasClickListener = true;
       console.log('[UI] 已绑定停止按钮事件监听器');
+    }
+
+    // ========== 绑定重置会话按钮 ==========
+    const resetSessionsBtn = document.getElementById('resetAllSessionsBtn');
+    if (resetSessionsBtn && !resetSessionsBtn._hasClickListener) {
+      resetSessionsBtn.addEventListener('click', () => {
+        console.log('[UI] 重置会话按钮点击');
+
+        if (!window.roomManager) return;
+
+        // 检查是否有参与者
+        if (window.roomManager.participantIds.size === 0) {
+          this._showHint('房间中没有参与者');
+          return;
+        }
+
+        // 显示确认模态框
+        this._showResetSessionsModal();
+      });
+      resetSessionsBtn._hasClickListener = true;
+      console.log('[UI] 已绑定重置会话按钮事件监听器');
     }
 
     // 更新循环状态 UI
@@ -730,6 +802,21 @@ const UIManager = {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  },
+
+  // 显示提示信息
+  _showHint(text, duration = 2000) {
+    const hintEl = document.getElementById('hint');
+    if (!hintEl) return;
+
+    hintEl.textContent = text;
+    hintEl.style.display = 'block';
+
+    if (duration > 0) {
+      setTimeout(() => {
+        hintEl.style.display = 'none';
+      }, duration);
+    }
   }
 };
 

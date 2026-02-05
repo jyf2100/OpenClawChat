@@ -104,6 +104,19 @@ class MessageRouter {
 
     const requestId = this._generateRequestId();
 
+    // 确定要使用的 sessionKey
+    let sessionKey = conn.sessionKey;
+
+    // 仅在房间模式下使用动态 sessionKey
+    const isInRoomMode = this._isInRoomMode();
+    if (isInRoomMode && window.roomManager) {
+      const dynamicKey = window.roomManager.getDynamicSessionKey(conn.id);
+      if (dynamicKey) {
+        sessionKey = dynamicKey;
+        console.log('[MessageRouter] 房间模式：使用动态 sessionKey:', dynamicKey);
+      }
+    }
+
     // 如果启用了 AI 交互模式，添加上下文
     let finalMessage = message;
     if (options.includeContext && window.roomManager) {
@@ -140,7 +153,7 @@ class MessageRouter {
           id: requestId,
           method: 'chat.send',
           params: {
-            sessionKey: conn.sessionKey,
+            sessionKey: sessionKey,
             message: finalMessage,
             deliver: false,
             idempotencyKey: requestId
@@ -159,6 +172,12 @@ class MessageRouter {
 
   _generateRequestId() {
     return 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  }
+
+  // 检查是否在房间模式
+  _isInRoomMode() {
+    const roomStatusBar = document.getElementById('roomStatusBar');
+    return roomStatusBar && roomStatusBar.style.display !== 'none';
   }
 }
 

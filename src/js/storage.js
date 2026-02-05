@@ -9,6 +9,7 @@ const Storage = {
     ROOM_MESSAGES: "roclaw.room.messages",
     ROOM_SETTINGS: "roclaw.room.settings",
     ROOM_ACTIVE: "roclaw.room.active",
+    ROOM_SESSION_KEYS: "roclaw.room.sessionKeys",
   },
 
   // ========== 连接配置 ==========
@@ -310,6 +311,32 @@ const Storage = {
       }
     } catch (error) {
       console.error('Failed to set active view:', error);
+    }
+  },
+
+  // ========== 房间 SessionKey 映射存储（会话隔离）==========
+
+  // 保存房间 sessionKey 映射
+  saveRoomSessionKeys(sessionKeyMap) {
+    try {
+      localStorage.setItem(this.KEYS.ROOM_SESSION_KEYS, JSON.stringify(sessionKeyMap));
+      console.log('[Storage] 已保存房间 sessionKey 映射');
+    } catch (error) {
+      console.error('[Storage] 保存房间 sessionKey 映射失败:', error);
+    }
+  },
+
+  // 获取房间 sessionKey 映射
+  getRoomSessionKeys() {
+    try {
+      const data = localStorage.getItem(this.KEYS.ROOM_SESSION_KEYS);
+      if (data) {
+        return JSON.parse(data);
+      }
+      return {};
+    } catch (error) {
+      console.error('[Storage] 加载房间 sessionKey 映射失败:', error);
+      return {};
     }
   }
 };
