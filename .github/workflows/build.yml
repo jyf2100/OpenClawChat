@@ -9,17 +9,7 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'macos-latest'
-            name: 'arm64'
-          - platform: 'macos-13'
-            name: 'x86_64'
-
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 360
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
@@ -39,18 +29,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: List build outputs
-        run: |
-          echo "Listing src-tauri/target/release/bundle/"
-          find src-tauri/target/release/bundle/ -type f -name '*.dmg' || echo "No DMG found"
-          echo "Listing src-tauri/target/*/release/bundle/"
-          find src-tauri/target/*/release/bundle/ -type f -name '*.dmg' || echo "No DMG in arch dirs"
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: RoClaw-Chat-macos-${{ matrix.name }}
+          name: RoClaw-Chat-macos-arm64
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/*/release/bundle/dmg/*.dmg
