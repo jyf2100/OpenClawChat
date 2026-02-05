@@ -1,0 +1,99 @@
+services:
+  # Gateway 服务（长期运行）
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-gateway
+    restart: unless-stopped
+
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      # 认证 Token
+      OPENCLAW_GATEWAY_TOKEN: ${GATEWAY_TOKEN}
+      # Claude 认证（可选）
+      CLAUDE_AI_SESSION_KEY: ${CLAUDE_KEY:-}
+      # 智谱 AI 认证
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      # 运行模式
+      NODE_ENV: production
+
+    volumes:
+      # 配置持久化
+      - openclaw_config:/home/node/.openclaw
+      # 工作区持久化
+      - openclaw_workspace:/home/node/.openclaw/workspace
+
+    ports:
+      - "18789:18789"  # Gateway WebSocket / Web UI
+      - "18790:18790"  # Bridge
+
+    # 启动命令：绑定到 lan (0.0.0.0)
+    command:
+      [
+        "node",
+        "dist/index.js",
+        "gateway",
+        "--bind",
+        "lan",
+        "--port",
+        "18789",
+        "--allow-unconfigured",
+      ]
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "node", "dist/index.js", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # 资源限制（个人使用适中配置）
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # CLI 服务（按需运行）
+  openclaw-cli:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-cli
+
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${GATEWAY_TOKEN}
+      CLAUDE_AI_SESSION_KEY: ${CLAUDE_KEY:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      # 禁用浏览器交互
+      BROWSER: echo
+
+    volumes:
+      - openclaw_config:/home/node/.openclaw
+      - openclaw_workspace:/home/node/.openclaw/workspace
+
+    # 不自动启动，不重启
+    profiles:
+      - tools
+    # 交互式终端
+    stdin_open: true
+    tty: true
+    entrypoint: ["node", "dist/index.js"]
+
+# 命名卷定义
+volumes:
+  openclaw_config:
+    driver: local
+  openclaw_workspace:
+    driver: local

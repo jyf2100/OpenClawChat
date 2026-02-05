@@ -1,0 +1,9 @@
+# 环境变量（包含敏感信息）
+.env
+.env.local
+.env.*.local
+
+# 备份文件
+*.tar.gz
+backup/
+.claude/
