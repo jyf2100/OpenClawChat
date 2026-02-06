@@ -79,6 +79,7 @@ const UIManager = {
   _bindSessionClickEvents() {
     // 连接和房间项点击
     document.querySelectorAll('.session-item[data-id]').forEach(item => {
+      // 左键点击：切换会话
       item.addEventListener('click', (e) => {
         // 如果点击的是设置按钮，不处理切换
         if (e.target.classList.contains('room-settings-btn')) {
@@ -89,6 +90,16 @@ const UIManager = {
         this.renderSessionList();
         this._handleSessionSwitch(sessionId);
       });
+
+      // 右键菜单：仅对连接类型显示
+      const sessionId = item.dataset.id;
+      const session = window.sessionManager?.getSession(sessionId);
+      if (session && session.type === 'connection') {
+        item.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          this._showContextMenu(e, sessionId);
+        });
+      }
     });
   },
 
