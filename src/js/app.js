@@ -891,12 +891,9 @@ function init() {
     handleChatEvent(payload);
   };
 
-  // 7. 渲染会话列表（使用新的 SessionManager）
-  console.log('[App] Rendering session list...');
-  UIManager.renderSessionList();
-
-  // 8. 初始化房间切换
-  UIManager.initRoomSwitching();
+  // 7. 初始化 UI（渲染连接列表和房间列表）
+  console.log('[App] Initializing UI...');
+  UIManager.init();
 
   // ========== 绑定侧边栏按钮事件 ==========
   const addBtn = document.getElementById('addConnBtn');

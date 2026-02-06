@@ -121,6 +121,27 @@ class SessionManager {
 
   // ========== 房间专用 ==========
 
+  // 只获取房间，不包括连接
+  getAllRooms() {
+    const all = this.getAllSessions();
+    return all.filter(s => s.type === 'room');
+  }
+
+  // 活跃房间ID（独立于活跃连接）
+  get activeRoomId() {
+    // 检查当前活跃会话是否为房间类型
+    const sessionId = this.activeSessionId;
+    if (!sessionId) return null;
+
+    const session = this.getSession(sessionId);
+    return session?.type === 'room' ? sessionId : null;
+  }
+
+  // 切换房间
+  switchRoom(roomId) {
+    return this.switchSession(roomId);
+  }
+
   _createRoomSession(config) {
     const normalized = this.normalizeRoomName(config.name);
     const roomId = `room:${normalized}`;
