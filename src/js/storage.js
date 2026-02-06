@@ -10,6 +10,8 @@ const Storage = {
     ROOM_SETTINGS: "roclaw.room.settings",
     ROOM_ACTIVE: "roclaw.room.active",
     ROOM_SESSION_KEYS: "roclaw.room.sessionKeys",
+    SESSIONS: "roclaw.sessions",        // 新增：统一会话存储
+    ACTIVE_SESSION: "roclaw.activeSession"  // 新增：活跃会话ID
   },
 
   // ========== 连接配置 ==========
@@ -338,6 +340,59 @@ const Storage = {
       console.error('[Storage] 加载房间 sessionKey 映射失败:', error);
       return {};
     }
+  },
+
+  // ========== Session 存储（新增）==========
+
+  // 获取所有会话
+  getSessions() {
+    try {
+      const data = localStorage.getItem(this.KEYS.SESSIONS);
+      return data ? JSON.parse(data) : {};
+    } catch (error) {
+      console.error('[Storage] Failed to load sessions:', error);
+      return {};
+    }
+  },
+
+  // 保存所有会话
+  saveSessions(sessions) {
+    try {
+      localStorage.setItem(this.KEYS.SESSIONS, JSON.stringify(sessions));
+    } catch (error) {
+      console.error('[Storage] Failed to save sessions:', error);
+      throw error;
+    }
+  },
+
+  // 获取单个会话
+  getSession(sessionId) {
+    const sessions = this.getSessions();
+    return sessions[sessionId];
+  },
+
+  // 保存单个会话
+  saveSession(session) {
+    const sessions = this.getSessions();
+    sessions[session.id] = session;
+    this.saveSessions(sessions);
+  },
+
+  // 删除会话
+  deleteSession(sessionId) {
+    const sessions = this.getSessions();
+    delete sessions[sessionId];
+    this.saveSessions(sessions);
+  },
+
+  // 获取活跃会话
+  getActiveSession() {
+    return localStorage.getItem(this.KEYS.ACTIVE_SESSION);
+  },
+
+  // 设置活跃会话
+  setActiveSession(sessionId) {
+    localStorage.setItem(this.KEYS.ACTIVE_SESSION, sessionId);
   }
 };
 
