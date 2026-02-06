@@ -1,4 +1,7 @@
 // tests/js/sessionManager.test.js
+// 导入 SessionManager 源码（这会设置 window.SessionManager）
+import '../../src/js/sessionManager.js';
+
 describe('SessionManager - _addParticipantToSession', () => {
   let sessionManager;
   let mockStorage;
@@ -13,15 +16,15 @@ describe('SessionManager - _addParticipantToSession', () => {
       deleteSession: jest.fn()
     };
 
-    window.Storage = mockStorage;
+    global.Storage = mockStorage;
 
-    window.connectionManager = {
+    global.window.connectionManager = {
       getConnection: jest.fn()
     };
 
     // Create SessionManager instance
-    sessionManager = new SessionManager();
-    sessionManager.setConnectionManager(window.connectionManager);
+    sessionManager = new global.window.SessionManager();
+    sessionManager.setConnectionManager(global.window.connectionManager);
   });
 
   afterEach(() => {
@@ -29,18 +32,18 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should return false if connection not found', () => {
-    window.connectionManager.getConnection.mockReturnValue(null);
+    global.window.connectionManager.getConnection.mockReturnValue(null);
 
     const session = { participants: [], normalizedRoomName: 'test' };
     const result = sessionManager._addParticipantToSession(session, 'invalid-id');
 
     expect(result).toBe(false);
     expect(session.participants).toHaveLength(0);
-    expect(window.connectionManager.getConnection).toHaveBeenCalledWith('invalid-id');
+    expect(global.window.connectionManager.getConnection).toHaveBeenCalledWith('invalid-id');
   });
 
   test('should return false if sessionKey is null', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: null
@@ -54,7 +57,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should return false if sessionKey is undefined', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: undefined
@@ -68,7 +71,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should return false if sessionKey is not a string', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: 12345
@@ -82,7 +85,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should return false if sessionKey is malformed (no colon)', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: 'invalid-format'
@@ -96,7 +99,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should return false if sessionKey is malformed (only one part)', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: 'agent:'
@@ -110,7 +113,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should add participant with valid sessionKey (agent:main:main format)', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: 'agent:main:main'
@@ -129,7 +132,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should add participant with valid sessionKey (agent:gpt-4:default format)', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-2',
       name: 'GPT-4',
       sessionKey: 'agent:gpt-4:default'
@@ -152,7 +155,7 @@ describe('SessionManager - _addParticipantToSession', () => {
       name: 'Test AI'
     };
 
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: 'agent:main:main'
@@ -171,7 +174,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should add multiple participants to same session', () => {
-    window.connectionManager.getConnection.mockImplementation((connId) => {
+    global.window.connectionManager.getConnection.mockImplementation((connId) => {
       if (connId === 'conn-1') {
         return {
           id: 'conn-1',
@@ -201,7 +204,7 @@ describe('SessionManager - _addParticipantToSession', () => {
   });
 
   test('should handle empty string sessionKey', () => {
-    window.connectionManager.getConnection.mockReturnValue({
+    global.window.connectionManager.getConnection.mockReturnValue({
       id: 'conn-1',
       name: 'Test AI',
       sessionKey: ''

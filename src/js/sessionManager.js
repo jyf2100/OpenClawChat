@@ -195,7 +195,7 @@ class SessionManager {
     }
 
     const parts = conn.sessionKey.split(':');
-    if (parts.length < 2) {
+    if (parts.length < 2 || parts[1] === '') {
       console.error('[SessionManager] Malformed sessionKey:', conn.sessionKey);
       return false;
     }
