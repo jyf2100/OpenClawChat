@@ -222,6 +222,58 @@ class SessionManager {
   _generateId() {
     return 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
   }
+
+  // ========== 消息发送 ==========
+
+  async sendMessage(sessionId, message, options = {}) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error('Session not found: ' + sessionId);
+    }
+
+    if (session.type === 'connection') {
+      return await this._sendToConnection(session.id, message, options);
+    } else if (session.type === 'room') {
+      return await this._sendToRoom(session.id, message, options);
+    }
+  }
+
+  async _sendToConnection(connId, message, options) {
+    const conn = this.connectionManager.getConnection(connId);
+    if (!conn) {
+      throw new Error('Connection not found: ' + connId);
+    }
+
+    // TODO: 实现发送逻辑，参考现有 messageRouter.js
+    console.log('[SessionManager] Sending to connection:', conn.name, message);
+    return { success: true };
+  }
+
+  async _sendToRoom(roomId, message, options) {
+    const session = this.sessions.get(roomId);
+    if (!session) {
+      throw new Error('Room session not found: ' + roomId);
+    }
+
+    if (session.participants.length === 0) {
+      throw new Error('No participants in room');
+    }
+
+    const results = [];
+
+    for (const participant of session.participants) {
+      try {
+        // TODO: 实现发送逻辑
+        console.log('[SessionManager] Sending to participant:', participant.name, 'with key:', participant.dynamicKey);
+        results.push({ success: true, participant: participant.name });
+      } catch (error) {
+        console.error('[SessionManager] Failed to send to', participant.name, error);
+        results.push({ success: false, participant: participant.name, error: error.message });
+      }
+    }
+
+    return results;
+  }
 }
 
 // 导出到全局
