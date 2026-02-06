@@ -868,8 +868,15 @@ function init() {
   }
 
   // 4. 初始化房间管理器（保留用于向后兼容）
-  console.log('[App] Initializing RoomManager...');
-  window.roomManager = new RoomManager();
+  console.log('[App] Initializing RoomSession...');
+  window.roomManager = new RoomSession({
+    id: 'room-public',
+    name: '公共聊天',
+    roomId: 'room:public',
+    normalizedRoomName: 'public',
+    messages: [],
+    settings: {}
+  });
   window.roomManager.init();
 
   // 5. 初始化消息路由器
