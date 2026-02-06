@@ -43,18 +43,29 @@ const UIManager = {
     if (!container) return;
 
     container.querySelectorAll('.conn-item').forEach(item => {
+      // 移除旧的事件监听器（如果存在）
+      if (item._connClickHandler) {
+        item.removeEventListener('click', item._connClickHandler);
+      }
+
       // 左键点击：切换连接
-      item.addEventListener('click', (e) => {
+      item._connClickHandler = (e) => {
         const connId = e.currentTarget.dataset.id;
         window.connectionManager.switchConnection(connId);
-      });
+      };
+      item.addEventListener('click', item._connClickHandler);
 
       // 右键菜单
-      item.addEventListener('contextmenu', (e) => {
+      if (item._connContextMenuHandler) {
+        item.removeEventListener('contextmenu', item._connContextMenuHandler);
+      }
+
+      item._connContextMenuHandler = (e) => {
         e.preventDefault();
         const connId = e.currentTarget.dataset.id;
         this._showContextMenu(e, connId);
-      });
+      };
+      item.addEventListener('contextmenu', item._connContextMenuHandler);
     });
   },
 
@@ -97,12 +108,20 @@ const UIManager = {
     if (!container) return;
 
     container.querySelectorAll('.room-item').forEach(item => {
-      item.addEventListener('click', (e) => {
+      // 移除旧的事件监听器（如果存在）
+      if (item._roomClickHandler) {
+        item.removeEventListener('click', item._roomClickHandler);
+      }
+
+      // 创建并保存新的处理器引用
+      item._roomClickHandler = (e) => {
         const roomId = e.currentTarget.dataset.id;
         window.sessionManager.switchRoom(roomId);
         this.renderRoomList();
         this._handleRoomSwitch(roomId);
-      });
+      };
+
+      item.addEventListener('click', item._roomClickHandler);
     });
   },
 
