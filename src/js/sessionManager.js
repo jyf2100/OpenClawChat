@@ -123,8 +123,8 @@ class SessionManager {
 
   // 只获取房间，不包括连接
   getAllRooms() {
-    const all = this.getAllSessions();
-    return all.filter(s => s.type === 'room');
+    return Array.from(this.sessions.values())
+      .filter(s => s.type === 'room');
   }
 
   // 活跃房间ID（独立于活跃连接）
