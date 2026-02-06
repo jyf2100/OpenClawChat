@@ -210,6 +210,32 @@
     </div>
   </div>
 
+  <!-- 创建房间模态框 -->
+  <div class="modal-overlay" id="createRoomModal" style="display: none;">
+    <div class="modal" style="max-width: 400px;">
+      <div class="modal-header">
+        <span class="modal-title">创建房间</span>
+        <button class="modal-close" id="createRoomModalClose">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <span class="label">房间名称 *</span>
+          <input class="input" id="roomNameInput" placeholder="如：技术讨论、代码审查" maxlength="20">
+        </div>
+        <div class="field">
+          <span class="label">选择参与者</span>
+          <div class="participant-selector" id="participantSelector">
+            <!-- 动态生成 -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="createRoomCancel">取消</button>
+        <button class="btn btn-primary" id="createRoomConfirm">创建</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 右键菜单 -->
   <div class="context-menu" id="contextMenu" style="display: none;">
     <div class="context-menu-item" data-action="edit">✏️ 编辑</div>
