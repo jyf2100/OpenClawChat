@@ -843,18 +843,41 @@ function chooseImage() {
 
 // 初始化
 function init() {
-  // ========== 初始化房间管理器 ==========
-  window.roomManager = new RoomManager();
-  window.roomManager.init();
+  console.log('[App] Initializing...');
 
-  // ========== 初始化连接管理器 ==========
+  // 1. 检查并执行数据迁移
+  if (window.DataMigration && window.DataMigration.needsMigration()) {
+    console.log('[App] Running data migration...');
+    window.DataMigration.migrate();
+  }
+
+  // 2. 初始化 SessionManager
+  console.log('[App] Initializing SessionManager...');
+  window.sessionManager = new SessionManager();
+  // 注意：connectionManager 将在第3步初始化后设置
+  window.sessionManager.init();
+
+  // 3. 初始化连接管理器
+  console.log('[App] Initializing ConnectionManager...');
   window.connectionManager = new ConnectionManager();
   window.connectionManager.init();
 
-  // ========== 初始化消息路由器 ==========
+  // 将 ConnectionManager 实例设置给 SessionManager
+  if (window.sessionManager) {
+    window.sessionManager.connectionManager = window.connectionManager;
+  }
+
+  // 4. 初始化房间管理器（保留用于向后兼容）
+  console.log('[App] Initializing RoomManager...');
+  window.roomManager = new RoomManager();
+  window.roomManager.init();
+
+  // 5. 初始化消息路由器
+  console.log('[App] Initializing MessageRouter...');
   window.messageRouter = new MessageRouter(window.connectionManager);
 
-  // ========== 初始化 @提及补全 ==========
+  // 6. 初始化 @提及补全
+  console.log('[App] Initializing MentionAutocomplete...');
   window.mentionAutocomplete = new MentionAutocomplete();
 
   // 设置聊天事件回调
@@ -862,10 +885,11 @@ function init() {
     handleChatEvent(payload);
   };
 
-  // ========== 渲染连接列表 ==========
-  UIManager.renderConnectionList();
+  // 7. 渲染会话列表（使用新的 SessionManager）
+  console.log('[App] Rendering session list...');
+  UIManager.renderSessionList();
 
-  // ========== 初始化房间切换 ==========
+  // 8. 初始化房间切换
   UIManager.initRoomSwitching();
 
   // ========== 绑定侧边栏按钮事件 ==========
