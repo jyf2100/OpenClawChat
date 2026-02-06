@@ -25,7 +25,7 @@ const UIManager = {
 
     // 渲染房间列表
     this._renderRoomList(rooms, activeId);
-  }
+  },
 
   _renderConnectionList(connections, activeId) {
     const container = document.getElementById('connList');
