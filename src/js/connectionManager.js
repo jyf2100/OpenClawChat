@@ -13,34 +13,14 @@ class ConnectionManager {
   // ========== 初始化 ==========
 
   init() {
-    // 加载连接配置
-    this.connections = Storage.getConnections();
-    this.activeConnectionId = Storage.getActiveConnection();
+    // 初始化连接状态，不加载配置（配置由 SessionManager 管理）
+    // 保留 WebSocket 连接池功能
 
-    // 初始化状态
-    this.connections.forEach(conn => {
-      this.connectionStates.set(conn.id, {
-        status: 'disconnected',
-        ws: null,
-        pending: new Map(),
-        messageQueue: [],
-        reconnectAttempts: 0
-      });
-      this.messageCache.set(conn.id, Storage.getMessages(conn.id));
-      this.scrollPositions.set(conn.id, Storage.getScrollPos(conn.id));
-      this.unreadCounts.set(conn.id, 0);
-    });
+    // 连接配置现在由 SessionManager 提供
+    this.connections = [];  // 保留，但数据由 SessionManager 填充
+    this.connectionStates = new Map();
 
-    // 如果没有连接，创建默认连接
-    if (this.connections.length === 0) {
-      this._createDefaultConnection();
-    }
-
-    // 如果没有活跃连接，设置第一个为活跃
-    if (!this.activeConnectionId && this.connections.length > 0) {
-      this.activeConnectionId = this.connections[0].id;
-      Storage.setActiveConnection(this.activeConnectionId);
-    }
+    console.log('[ConnectionManager] Initialized');
   }
 
   _createDefaultConnection() {
@@ -76,31 +56,19 @@ class ConnectionManager {
   // ========== 连接 CRUD ==========
 
   addConnection(config) {
-    // 验证配置
-    const validation = this._validateConnection(config);
-    if (!validation.valid) {
-      throw new Error(validation.errors.join(', '));
-    }
-
-    // 生成 ID
-    const id = 'conn-' + Date.now();
+    // 支持从 SessionManager 传入的 id，或自动生成
+    const id = config.id || 'conn-' + Date.now();
     const conn = {
-      id,
+      id: id,
       name: config.name,
       gatewayUrl: config.gatewayUrl,
       token: config.token || '',
       sessionKey: config.sessionKey,
-      status: 'disconnected',
-      unreadCount: 0,
-      createdAt: Date.now(),
-      lastConnected: null
+      status: 'disconnected'
     };
 
-    // 添加到列表
     this.connections.push(conn);
-    Storage.saveConnections(this.connections);
 
-    // 初始化状态
     this.connectionStates.set(id, {
       status: 'disconnected',
       ws: null,
@@ -108,9 +76,6 @@ class ConnectionManager {
       messageQueue: [],
       reconnectAttempts: 0
     });
-    this.messageCache.set(id, []);
-    this.scrollPositions.set(id, null);
-    this.unreadCounts.set(id, 0);
 
     return conn;
   }
@@ -201,6 +166,11 @@ class ConnectionManager {
 
   getAllConnections() {
     return [...this.connections];
+  }
+
+  // 别名方法，与 SessionManager 接口一致
+  getConnections() {
+    return this.connections;
   }
 
   // ========== 连接控制 ==========
