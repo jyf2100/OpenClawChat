@@ -72,7 +72,7 @@ describe('Room Management Integration', () => {
       sessionKey: 'agent:claude:main'
     });
 
-    // 创建多个房间（添加延迟确保时间戳不同）
+    // 创建多个房间（不再需要延迟，计数器确保 ID 唯一性）
     const rooms = [];
     for (let i = 0; i < 10; i++) {
       const room = sessionManager.createSession('room', {
@@ -80,13 +80,15 @@ describe('Room Management Integration', () => {
         participantIds: i % 2 === 0 ? ['conn-1', 'conn-2'] : ['conn-1']
       });
       rooms.push(room);
-      // 添加小延迟确保时间戳不同
-      await new Promise(resolve => setTimeout(resolve, 2));
     }
 
     // 验证房间创建
     const allRooms = sessionManager.getAllRooms();
     expect(allRooms.length).toBeGreaterThanOrEqual(10);
+
+    // 验证所有房间都有唯一的 ID
+    const roomIds = new Set(rooms.map(r => r.id));
+    expect(roomIds.size).toBe(10);  // 所有 ID 都应该是唯一的
 
     // 验证最后一个房间的参与者
     const lastRoom = allRooms[allRooms.length - 1];
@@ -293,7 +295,7 @@ describe('Room Management Integration', () => {
     expect(dynamicKey).toBe('agent:gpt-4:client:room:test-room:1234567890');
   });
 
-  test('should handle room deletion correctly', async () => {
+  test('should handle room deletion correctly', () => {
     // 创建连接
     const conn1 = connectionManager.addConnection({
       id: 'conn-1',
@@ -302,13 +304,11 @@ describe('Room Management Integration', () => {
       sessionKey: 'agent:gpt-4:default'
     });
 
-    // 创建房间（添加延迟确保时间戳不同）
+    // 创建房间（不再需要延迟）
     const room1 = sessionManager.createSession('room', {
       name: 'RoomDelete1',
       participantIds: ['conn-1']
     });
-
-    await new Promise(resolve => setTimeout(resolve, 2));
 
     const room2 = sessionManager.createSession('room', {
       name: 'RoomDelete2',
@@ -347,5 +347,45 @@ describe('Room Management Integration', () => {
 
     const roomContainer = document.getElementById('roomList');
     expect(roomContainer.innerHTML).toContain('暂无房间');
+  });
+
+  test('should handle rapid room creation without ID conflicts', () => {
+    // 创建连接
+    const conn1 = connectionManager.addConnection({
+      id: 'conn-1',
+      name: 'AI 1',
+      gatewayUrl: 'ws://localhost:8080',
+      sessionKey: 'agent:gpt-4:default'
+    });
+
+    // 快速创建多个房间，不添加任何延迟
+    const rooms = [];
+    for (let i = 0; i < 20; i++) {
+      const room = sessionManager.createSession('room', {
+        name: `RapidRoom${i}`,
+        participantIds: ['conn-1']
+      });
+      rooms.push(room);
+    }
+
+    // 验证所有房间都被创建
+    expect(rooms).toHaveLength(20);
+
+    // 验证所有 ID 都是唯一的
+    const roomIds = new Set(rooms.map(r => r.id));
+    expect(roomIds.size).toBe(20);
+
+    // 验证所有房间都能被正确获取
+    const allRooms = sessionManager.getAllRooms();
+    expect(allRooms.length).toBeGreaterThanOrEqual(20);
+
+    // 验证每个房间的数据完整性
+    rooms.forEach((room, index) => {
+      expect(room.name).toBe(`RapidRoom${index}`);
+      expect(room.type).toBe('room');
+      expect(room.participants).toHaveLength(1);
+      expect(room.participants[0].connId).toBe('conn-1');
+      expect(room.id).toMatch(/^room-\d+-\d+$/);  // ID 格式：room-{counter}-{timestamp}
+    });
   });
 });

@@ -4,6 +4,7 @@ class SessionManager {
     this.sessions = new Map();
     this.connectionManager = null;  // 延迟初始化
     this.activeSessionId = null;
+    this._roomCounter = 0;  // 房间计数器，确保 ID 唯一性
   }
 
   // 设置连接管理器（用于依赖注入）
@@ -34,16 +35,13 @@ class SessionManager {
   // ========== Session CRUD ==========
 
   createSession(type, config) {
-    const sessionId = type === 'connection'
-      ? config.id || 'conn-' + Date.now()
-      : 'room-' + Date.now();
-
     let session;
 
     if (type === 'connection') {
       // 添加到 ConnectionManager
       const conn = this.connectionManager.addConnection(config);
 
+      const sessionId = config.id || 'conn-' + Date.now();
       session = {
         id: sessionId,
         type: 'connection',
@@ -59,6 +57,8 @@ class SessionManager {
       session = this._createRoomSession(config);
     }
 
+    // 使用 session 对象自己的 ID
+    const sessionId = session.id;
     this.sessions.set(sessionId, session);
     window.Storage.saveSession(session);
 
@@ -147,7 +147,7 @@ class SessionManager {
     const roomId = `room:${normalized}`;
 
     const session = {
-      id: 'room-' + Date.now(),
+      id: 'room-' + (++this._roomCounter) + '-' + Date.now(),  // 使用计数器确保唯一性
       type: 'room',
       name: config.name,
       normalizedRoomName: normalized,
