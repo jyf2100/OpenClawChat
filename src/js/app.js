@@ -854,7 +854,6 @@ function init() {
   // 2. 初始化 SessionManager
   console.log('[App] Initializing SessionManager...');
   window.sessionManager = new SessionManager();
-  // 注意：connectionManager 将在第3步初始化后设置
   window.sessionManager.init();
 
   // 3. 初始化连接管理器
@@ -862,9 +861,9 @@ function init() {
   window.connectionManager = new ConnectionManager();
   window.connectionManager.init();
 
-  // 将 ConnectionManager 实例设置给 SessionManager
-  if (window.sessionManager) {
-    window.sessionManager.connectionManager = window.connectionManager;
+  // 将 ConnectionManager 实例注入到 SessionManager
+  if (window.sessionManager && window.sessionManager.setConnectionManager) {
+    window.sessionManager.setConnectionManager(window.connectionManager);
   }
 
   // 4. 初始化房间管理器（保留用于向后兼容）

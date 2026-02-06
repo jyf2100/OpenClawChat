@@ -93,6 +93,9 @@ const DataMigration = {
     // 5. 标记迁移完成
     localStorage.setItem('roclaw.migration.version', this.VERSION);
     console.log('[Migration] Migration completed successfully');
+
+    // 6. 清理旧数据
+    this._cleanupOldData();
   },
 
   // 生成兼容旧版的动态 key

@@ -104,12 +104,61 @@ const UIManager = {
   },
 
   _switchToConnectionMode(sessionId) {
-    // TODO: 实现连接模式切换
+    // 隐藏房间状态栏
+    const roomStatusBar = document.getElementById('roomStatusBar');
+    if (roomStatusBar) {
+      roomStatusBar.style.display = 'none';
+    }
+
+    // 更新标题为连接名称
+    const session = window.sessionManager?.getSession(sessionId);
+    if (session) {
+      const titleEl = document.getElementById('currentConnTitle');
+      if (titleEl) {
+        titleEl.textContent = session.name;
+      }
+    }
+
+    // 更新全局状态
+    if (window.state) {
+      window.state.isInRoomMode = false;
+      window.state.currentSessionId = sessionId;
+    }
+
     console.log('[UI] Switched to connection mode:', sessionId);
   },
 
   _switchToRoomMode(sessionId) {
-    // TODO: 实现房间模式切换
+    // 显示房间状态栏
+    const roomStatusBar = document.getElementById('roomStatusBar');
+    if (roomStatusBar) {
+      roomStatusBar.style.display = 'flex';
+      // 更新参与者数量
+      const session = window.sessionManager?.getSession(sessionId);
+      if (session && session.participants) {
+        const countEl = document.getElementById('participantsCount');
+        if (countEl) {
+          countEl.textContent = session.participants.length;
+        }
+      }
+    }
+
+    // 更新标题为房间名称
+    const session = window.sessionManager?.getSession(sessionId);
+    if (session) {
+      const titleEl = document.getElementById('currentConnTitle');
+      if (titleEl) {
+        titleEl.textContent = session.name;
+      }
+    }
+
+    // 更新全局状态
+    if (window.state) {
+      window.state.isInRoomMode = true;
+      window.state.currentSessionId = sessionId;
+      window.state.currentRoomId = sessionId;
+    }
+
     console.log('[UI] Switched to room mode:', sessionId);
   }
 

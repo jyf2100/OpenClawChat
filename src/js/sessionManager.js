@@ -2,8 +2,13 @@
 class SessionManager {
   constructor() {
     this.sessions = new Map();
-    this.connectionManager = window.ConnectionManager;
+    this.connectionManager = null;  // 延迟初始化
     this.activeSessionId = null;
+  }
+
+  // 设置连接管理器（用于依赖注入）
+  setConnectionManager(connectionManager) {
+    this.connectionManager = connectionManager;
   }
 
   // 初始化
@@ -244,9 +249,54 @@ class SessionManager {
       throw new Error('Connection not found: ' + connId);
     }
 
-    // TODO: 实现发送逻辑，参考现有 messageRouter.js
-    console.log('[SessionManager] Sending to connection:', conn.name, message);
-    return { success: true };
+    // 使用 MessageRouter 发送消息
+    if (window.messageRouter) {
+      return await window.messageRouter._sendToConnection(conn, message, options);
+    }
+
+    // Fallback: 直接通过 WebSocket 发送
+    const state = this.connectionManager.connectionStates.get(connId);
+    if (!state || !state.ws) {
+      throw new Error('连接未建立');
+    }
+
+    const requestId = this._generateId();
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        state.pending.delete(requestId);
+        resolve();
+      }, 5000);
+
+      state.pending.set(requestId, {
+        resolve: (payload) => {
+          clearTimeout(timeout);
+          resolve(payload);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+
+      try {
+        const payload = JSON.stringify({
+          type: 'req',
+          id: requestId,
+          method: 'chat.send',
+          params: {
+            sessionKey: conn.sessionKey,
+            message: message,
+            deliver: false,
+            idempotencyKey: requestId
+          }
+        });
+        state.ws.send(payload);
+      } catch (error) {
+        clearTimeout(timeout);
+        state.pending.delete(requestId);
+        reject(error);
+      }
+    });
   }
 
   async _sendToRoom(roomId, message, options) {
@@ -263,9 +313,57 @@ class SessionManager {
 
     for (const participant of session.participants) {
       try {
-        // TODO: 实现发送逻辑
-        console.log('[SessionManager] Sending to participant:', participant.name, 'with key:', participant.dynamicKey);
-        results.push({ success: true, participant: participant.name });
+        const conn = this.connectionManager.getConnection(participant.connId);
+        if (!conn) {
+          results.push({ success: false, participant: participant.name, error: '连接不存在' });
+          continue;
+        }
+
+        // 使用参与者的动态 sessionKey 发送
+        const state = this.connectionManager.connectionStates.get(participant.connId);
+        if (!state || !state.ws) {
+          results.push({ success: false, participant: participant.name, error: '连接未建立' });
+          continue;
+        }
+
+        const requestId = this._generateId();
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            state.pending.delete(requestId);
+            resolve();
+          }, 5000);
+
+          state.pending.set(requestId, {
+            resolve: (payload) => {
+              clearTimeout(timeout);
+              resolve(payload);
+            },
+            reject: () => {
+              clearTimeout(timeout);
+              resolve();
+            }
+          });
+
+          try {
+            const payload = JSON.stringify({
+              type: 'req',
+              id: requestId,
+              method: 'chat.send',
+              params: {
+                sessionKey: participant.dynamicKey,
+                message: message,
+                deliver: false,
+                idempotencyKey: requestId
+              }
+            });
+            state.ws.send(payload);
+            results.push({ success: true, participant: participant.name });
+          } catch (error) {
+            clearTimeout(timeout);
+            state.pending.delete(requestId);
+            results.push({ success: false, participant: participant.name, error: error.message });
+          }
+        });
       } catch (error) {
         console.error('[SessionManager] Failed to send to', participant.name, error);
         results.push({ success: false, participant: participant.name, error: error.message });
