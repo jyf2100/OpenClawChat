@@ -47,7 +47,7 @@ const UIManager = {
 
     // 绑定点击事件
     this._bindSessionClickEvents();
-  }
+  },
 
   _renderRoomList(rooms, activeId) {
     const container = document.getElementById('roomList');
@@ -74,7 +74,7 @@ const UIManager = {
 
     // 绑定点击事件
     this._bindSessionClickEvents();
-  }
+  },
 
   _bindSessionClickEvents() {
     // 连接和房间项点击
@@ -90,7 +90,7 @@ const UIManager = {
         this._handleSessionSwitch(sessionId);
       });
     });
-  }
+  },
 
   _handleSessionSwitch(sessionId) {
     const session = window.sessionManager.getSession(sessionId);
@@ -101,12 +101,12 @@ const UIManager = {
     } else if (session.type === 'room') {
       this._switchToRoomMode(sessionId);
     }
-  }
+  },
 
   _switchToConnectionMode(sessionId) {
     // TODO: 实现连接模式切换
     console.log('[UI] Switched to connection mode:', sessionId);
-  }
+  },
 
   _switchToRoomMode(sessionId) {
     // TODO: 实现房间模式切换
