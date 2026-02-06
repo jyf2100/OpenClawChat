@@ -876,6 +876,13 @@ function init() {
     });
   }
 
+  const addRoomBtn = document.getElementById('addRoomBtn');
+  if (addRoomBtn) {
+    addRoomBtn.addEventListener('click', () => {
+      UIManager.showCreateRoomModal();
+    });
+  }
+
   // ========== 加载当前活跃连接的配置 ==========
   const activeConn = window.connectionManager.getConnection(window.connectionManager.activeConnectionId);
   if (activeConn) {

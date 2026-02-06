@@ -173,6 +173,90 @@ const UIManager = {
     this._showModal('编辑连接', conn);
   },
 
+  showCreateRoomModal() {
+    const modal = document.getElementById('createRoomModal');
+    const nameInput = document.getElementById('roomNameInput');
+    const participantSelector = document.getElementById('participantSelector');
+
+    if (!modal) return;
+
+    // 清空输入
+    nameInput.value = '';
+
+    // 渲染可用连接列表
+    const sessions = window.sessionManager?.getAllSessions();
+    const connections = sessions ? sessions.filter(s => s.type === 'connection') : [];
+
+    participantSelector.innerHTML = connections.map(conn => `
+      <label class="participant-option">
+        <input type="checkbox" value="${conn.id}" class="participant-checkbox">
+        <span>${this._escapeHtml(conn.name)}</span>
+      </label>
+    `).join('');
+
+    // 显示模态框
+    modal.style.display = 'flex';
+
+    // 绑定事件
+    this._bindCreateRoomModalEvents();
+  },
+
+  _bindCreateRoomModalEvents() {
+    const modal = document.getElementById('createRoomModal');
+    const confirmBtn = document.getElementById('createRoomConfirm');
+    const cancelBtn = document.getElementById('createRoomCancel');
+    const closeBtn = document.getElementById('createRoomModalClose');
+
+    // 确认创建
+    confirmBtn.onclick = () => {
+      this._createRoom();
+    };
+
+    // 取消/关闭
+    const closeHandler = () => {
+      modal.style.display = 'none';
+    };
+
+    cancelBtn.onclick = closeHandler;
+    closeBtn.onclick = closeHandler;
+  },
+
+  _createRoom() {
+    const nameInput = document.getElementById('roomNameInput');
+    const name = nameInput.value.trim();
+
+    if (!name) {
+      this._showHint('请输入房间名称');
+      return;
+    }
+
+    // 获取选中的参与者
+    const selectedConnIds = [];
+    document.querySelectorAll('.participant-checkbox:checked').forEach(checkbox => {
+      selectedConnIds.push(checkbox.value);
+    });
+
+    // 创建房间
+    const room = window.sessionManager.createSession('room', {
+      name: name,
+      participantIds: selectedConnIds
+    });
+
+    console.log('[UI] Created room:', room);
+
+    // 更新 UI
+    this.renderSessionList();
+
+    // 关闭模态框
+    document.getElementById('createRoomModal').style.display = 'none';
+
+    this._showHint(`已创建房间：${name}`);
+
+    // 自动切换到新房间
+    window.sessionManager.switchSession(room.id);
+    this._handleSessionSwitch(room.id);
+  },
+
   _showModal(title, connection) {
     const modal = document.getElementById('connModal');
     const titleEl = document.getElementById('modalTitle');
