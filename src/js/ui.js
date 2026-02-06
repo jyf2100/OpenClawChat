@@ -160,7 +160,7 @@ const UIManager = {
     }
 
     console.log('[UI] Switched to room mode:', sessionId);
-  }
+  },
 
   // 保留原有的 renderConnectionList 方法，用于向后兼容
   renderConnectionList() {
