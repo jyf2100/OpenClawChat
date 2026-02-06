@@ -4,12 +4,116 @@ const UIManager = {
   // ========== 初始化 ==========
 
   init() {
-    this.renderConnectionList();
+    this.renderSessionList();
     this.initRoomSwitching();
   },
 
   // ========== 连接列表渲染 ==========
 
+  renderSessionList() {
+    if (!window.sessionManager) return;
+
+    const sessions = window.sessionManager.getAllSessions();
+    const activeId = window.sessionManager.activeSessionId;
+
+    // 分离连接和房间
+    const connections = sessions.filter(s => s.type === 'connection');
+    const rooms = sessions.filter(s => s.type === 'room');
+
+    // 渲染连接列表
+    this._renderConnectionList(connections, activeId);
+
+    // 渲染房间列表
+    this._renderRoomList(rooms, activeId);
+  }
+
+  _renderConnectionList(connections, activeId) {
+    const container = document.getElementById('connList');
+    if (!container) return;
+
+    container.innerHTML = connections.map(conn => {
+      const isActive = conn.id === activeId;
+      const state = window.connectionManager?.connectionStates.get(conn.id);
+      const status = state?.status || 'disconnected';
+
+      return `
+        <div class="session-item connection ${isActive ? 'active' : ''}" data-id="${conn.id}">
+          <span class="session-icon">🔌</span>
+          <span class="session-name">${this._escapeHtml(conn.name)}</span>
+          <span class="session-status ${status}"></span>
+        </div>
+      `;
+    }).join('');
+
+    // 绑定点击事件
+    this._bindSessionClickEvents();
+  }
+
+  _renderRoomList(rooms, activeId) {
+    const container = document.getElementById('roomList');
+    if (!container) return;
+
+    if (rooms.length === 0) {
+      container.innerHTML = '<div style="padding: 8px 12px; color: #999; font-size: 13px;">暂无房间</div>';
+      return;
+    }
+
+    container.innerHTML = rooms.map(room => {
+      const isActive = room.id === activeId;
+      const participantCount = room.participants?.length || 0;
+
+      return `
+        <div class="session-item room ${isActive ? 'active' : ''}" data-id="${room.id}">
+          <span class="session-icon">🏠</span>
+          <span class="session-name">${this._escapeHtml(room.name)}</span>
+          <span class="participant-count">(${participantCount})</span>
+          <button class="room-settings-btn" title="房间设置">⚙️</button>
+        </div>
+      `;
+    }).join('');
+
+    // 绑定点击事件
+    this._bindSessionClickEvents();
+  }
+
+  _bindSessionClickEvents() {
+    // 连接和房间项点击
+    document.querySelectorAll('.session-item[data-id]').forEach(item => {
+      item.addEventListener('click', (e) => {
+        // 如果点击的是设置按钮，不处理切换
+        if (e.target.classList.contains('room-settings-btn')) {
+          return;
+        }
+        const sessionId = e.currentTarget.dataset.id;
+        window.sessionManager.switchSession(sessionId);
+        this.renderSessionList();
+        this._handleSessionSwitch(sessionId);
+      });
+    });
+  }
+
+  _handleSessionSwitch(sessionId) {
+    const session = window.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    if (session.type === 'connection') {
+      this._switchToConnectionMode(sessionId);
+    } else if (session.type === 'room') {
+      this._switchToRoomMode(sessionId);
+    }
+  }
+
+  _switchToConnectionMode(sessionId) {
+    // TODO: 实现连接模式切换
+    console.log('[UI] Switched to connection mode:', sessionId);
+  }
+
+  _switchToRoomMode(sessionId) {
+    // TODO: 实现房间模式切换
+    console.log('[UI] Switched to room mode:', sessionId);
+  }
+
+  // 保留原有的 renderConnectionList 方法，用于向后兼容
   renderConnectionList() {
     if (!window.connectionManager) return;
 
