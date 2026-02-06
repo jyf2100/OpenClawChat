@@ -188,12 +188,24 @@ class SessionManager {
       return false;
     }
 
+    // 验证 sessionKey 格式
+    if (!conn.sessionKey || typeof conn.sessionKey !== 'string') {
+      console.error('[SessionManager] Invalid sessionKey for connection:', connId);
+      return false;
+    }
+
+    const parts = conn.sessionKey.split(':');
+    if (parts.length < 2) {
+      console.error('[SessionManager] Malformed sessionKey:', conn.sessionKey);
+      return false;
+    }
+
     // 检查是否已存在
     if (session.participants.some(p => p.connId === connId)) {
       return false;
     }
 
-    const agentId = conn.sessionKey.split(':')[1];
+    const agentId = parts[1];
     const dynamicKey = this.generateDynamicSessionKey(
       agentId,
       session.normalizedRoomName,
