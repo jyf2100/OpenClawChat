@@ -82,7 +82,7 @@ const UIManager = {
     const activeId = window.sessionManager.activeRoomId;
 
     if (rooms.length === 0) {
-      container.innerHTML = '<div style="padding: 8px 12px; color: #999; font-size: 13px;">暂无房间</div>';
+      container.innerHTML = '<div class="room-empty-state">暂无房间</div>';
       return;
     }
 

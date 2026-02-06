@@ -1226,6 +1226,14 @@
   margin: 8px 12px;
 }
 
+/* ========== 房间空状态 ========== */
+.room-empty-state {
+  padding: 8px 12px;
+  color: #999;
+  font-size: 13px;
+  text-align: center;
+}
+
 /* ========== 公共聊天房间项 ========== */
 .room-item {
   display: flex;
