@@ -1,6 +1,28 @@
 // UI 操作模块 - 处理连接列表、弹窗和交互
 
 const UIManager = {
+  // ========== 菜单配置 ==========
+  // 右键菜单配置：定义每种类型支持的操作
+  MENU_CONFIG: {
+    connection: {
+      actions: ['edit', 'copy', 'reconnect', 'delete'],
+      labels: {
+        edit: '✏️ 编辑',
+        copy: '📋 复制',
+        reconnect: '🔄 重新连接',
+        delete: '🗑️ 删除'
+      }
+    },
+    room: {
+      actions: ['edit', 'copy', 'delete'],
+      labels: {
+        edit: '✏️ 编辑',
+        copy: '📋 复制',
+        delete: '🗑️ 删除'
+      }
+    }
+  },
+
   // ========== 初始化 ==========
 
   init() {
@@ -63,7 +85,7 @@ const UIManager = {
       item._connContextMenuHandler = (e) => {
         e.preventDefault();
         const connId = e.currentTarget.dataset.id;
-        this._showContextMenu(e, connId);
+        this._showContextMenu(e, connId, 'connection');
       };
       item.addEventListener('contextmenu', item._connContextMenuHandler);
     });
@@ -113,15 +135,26 @@ const UIManager = {
         item.removeEventListener('click', item._roomClickHandler);
       }
 
-      // 创建并保存新的处理器引用
+      // 创建并保存新的处理器引用 - 左键点击
       item._roomClickHandler = (e) => {
         const roomId = e.currentTarget.dataset.id;
         window.sessionManager.switchRoom(roomId);
         this.renderRoomList();
         this._handleRoomSwitch(roomId);
       };
-
       item.addEventListener('click', item._roomClickHandler);
+
+      // 右键菜单
+      if (item._roomContextMenuHandler) {
+        item.removeEventListener('contextmenu', item._roomContextMenuHandler);
+      }
+
+      item._roomContextMenuHandler = (e) => {
+        e.preventDefault();
+        const roomId = e.currentTarget.dataset.id;
+        this._showContextMenu(e, roomId, 'room');
+      };
+      item.addEventListener('contextmenu', item._roomContextMenuHandler);
     });
   },
 
@@ -134,13 +167,6 @@ const UIManager = {
     const roomStatusBar = document.getElementById('roomStatusBar');
     if (roomStatusBar) {
       roomStatusBar.style.display = 'flex';
-      // 更新参与者数量
-      if (session.participants) {
-        const countEl = document.getElementById('participantsCount');
-        if (countEl) {
-          countEl.textContent = session.participants.length;
-        }
-      }
     }
 
     // 更新标题为房间名称
@@ -154,9 +180,88 @@ const UIManager = {
       window.state.isInRoomMode = true;
       window.state.currentSessionId = roomId;
       window.state.currentRoomId = roomId;
+      // 清空当前消息状态
+      window.state.messages = session.messages || [];
+      window.state.streamText = null;
+      window.state.runId = null;
+      window.state.streamStartedAt = null;
     }
 
-    console.log('[UI] Switched to room:', roomId);
+    // 加载并渲染房间消息
+    this._renderRoomSessionMessages(session);
+
+    // 更新参与者显示（包含下拉菜单和按钮绑定）
+    this._updateParticipantsDisplay();
+
+    console.log('[UI] Switched to room:', roomId, 'with', (session.messages || []).length, 'messages');
+  },
+
+  // 渲染房间会话消息
+  _renderRoomSessionMessages(session) {
+    const chatThread = document.getElementById('chatThread');
+    if (!chatThread) return;
+
+    const messages = session.messages || [];
+
+    chatThread.innerHTML = '';
+
+    for (const msg of messages) {
+      this._renderRoomSessionMessage(msg);
+    }
+
+    // 滚动到底部
+    chatThread.scrollTop = chatThread.scrollHeight;
+  },
+
+  // 渲染单条房间消息
+  _renderRoomSessionMessage(msg) {
+    const chatThread = document.getElementById('chatThread');
+    if (!chatThread) return;
+
+    const line = document.createElement('div');
+    line.className = `chat-line ${msg.senderType === 'user' ? 'user' : 'assistant'}`;
+    line.id = msg.id || `msg-${Date.now()}-${Math.random()}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = msg.senderName || 'AI';
+
+    const content = document.createElement('div');
+    content.className = 'message-content';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    if (msg.senderType === 'ai' || msg.senderType === 'assistant' || msg.senderType === 'system') {
+      const textDiv = document.createElement('div');
+      textDiv.className = 'text markdown-content';
+
+      if (msg.content) {
+        const html = marked.parse(msg.content);
+        textDiv.innerHTML = html;
+
+        textDiv.querySelectorAll('pre code').forEach((block) => {
+          hljs.highlightElement(block);
+        });
+      }
+      bubble.appendChild(textDiv);
+    } else {
+      const text = document.createElement('span');
+      text.className = 'text';
+      text.textContent = msg.content || '';
+      bubble.appendChild(text);
+    }
+
+    content.appendChild(bubble);
+
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = formatTime(msg.timestamp || Date.now());
+    content.appendChild(meta);
+
+    line.appendChild(avatar);
+    line.appendChild(content);
+    chatThread.appendChild(line);
   },
 
   // ========== 弹窗操作 ==========
@@ -182,9 +287,8 @@ const UIManager = {
     // 清空输入
     nameInput.value = '';
 
-    // 渲染可用连接列表
-    const sessions = window.sessionManager?.getAllSessions();
-    const connections = sessions ? sessions.filter(s => s.type === 'connection') : [];
+    // 渲染可用连接列表 - 直接从 ConnectionManager 获取所有连接
+    const connections = window.connectionManager?.getAllConnections() || [];
 
     participantSelector.innerHTML = connections.map(conn => `
       <label class="participant-option">
@@ -224,8 +328,10 @@ const UIManager = {
     const nameInput = document.getElementById('roomNameInput');
     const name = nameInput.value.trim();
 
-    if (!name) {
-      this._showHint('请输入房间名称');
+    // 使用统一的验证方法
+    const validation = window.sessionManager.validateSessionName(name);
+    if (!validation.valid) {
+      this._showHint(validation.errors[0]);
       return;
     }
 
@@ -254,6 +360,175 @@ const UIManager = {
     // 自动切换到新房间
     window.sessionManager.switchRoom(room.id);
     this._handleRoomSwitch(room.id);
+  },
+
+  // ========== 房间编辑 ==========
+  _showEditRoomModal(roomId) {
+    const session = window.sessionManager.getSession(roomId);
+    if (!session || session.type !== 'room') {
+      console.warn('[UI] Room not found or not a room:', roomId);
+      return;
+    }
+
+    const modal = document.getElementById('editRoomModal');
+    const nameInput = document.getElementById('editRoomNameInput');
+
+    if (!modal) {
+      console.error('[UI] editRoomModal not found');
+      return;
+    }
+
+    // 填充当前名称
+    nameInput.value = session.name;
+
+    // 显示模态框
+    modal.style.display = 'flex';
+
+    // 绑定事件
+    this._bindEditRoomModalEvents(roomId);
+  },
+
+  _bindEditRoomModalEvents(roomId) {
+    const modal = document.getElementById('editRoomModal');
+    const confirmBtn = document.getElementById('editRoomConfirm');
+    const cancelBtn = document.getElementById('editRoomCancel');
+    const closeBtn = document.getElementById('editRoomModalClose');
+
+    // 克隆替换以清除旧事件监听器
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    const newCloseBtn = closeBtn.cloneNode(true);
+
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+
+    // 保存按钮
+    newConfirmBtn.addEventListener('click', () => {
+      this._saveRoom(roomId);
+    });
+
+    // 取消/关闭按钮
+    const closeHandler = () => {
+      modal.style.display = 'none';
+    };
+
+    newCancelBtn.addEventListener('click', closeHandler);
+    newCloseBtn.addEventListener('click', closeHandler);
+  },
+
+  _saveRoom(roomId) {
+    const nameInput = document.getElementById('editRoomNameInput');
+    const name = nameInput.value.trim();
+
+    // 使用 SessionManager 的验证方法
+    const validation = window.sessionManager.validateSessionName(name);
+
+    if (!validation.valid) {
+      this._showHint(validation.errors[0]);
+      return;
+    }
+
+    // 更新房间
+    const success = window.sessionManager.updateSession(roomId, { name });
+
+    if (!success) {
+      this._showHint('更新房间失败');
+      return;
+    }
+
+    // 更新 UI
+    this.renderRoomList();
+
+    // 如果当前房间被激活，更新标题
+    if (window.sessionManager.activeRoomId === roomId) {
+      const titleEl = document.getElementById('currentConnTitle');
+      if (titleEl) titleEl.textContent = name;
+    }
+
+    // 关闭模态框
+    document.getElementById('editRoomModal').style.display = 'none';
+
+    this._showHint(`已更新房间名称：${name}`);
+  },
+
+  // ========== 房间复制 ==========
+  _copyRoom(roomId) {
+    const session = window.sessionManager.getSession(roomId);
+    if (!session || session.type !== 'room') {
+      console.warn('[UI] Room not found or not a room:', roomId);
+      return;
+    }
+
+    // 使用 SessionManager 的复制方法（业务逻辑已迁移）
+    const newRoom = window.sessionManager.copySession(roomId);
+
+    if (!newRoom) {
+      this._showHint('复制房间失败');
+      return;
+    }
+
+    this.renderRoomList();
+    this._showHint(`已复制房间：${newRoom.name}`);
+  },
+
+  // ========== 房间删除 ==========
+  _deleteRoom(roomId) {
+    const session = window.sessionManager.getSession(roomId);
+    if (!session || session.type !== 'room') {
+      console.warn('[UI] Room not found or not a room:', roomId);
+      return;
+    }
+
+    this._showDeleteRoomModal(roomId, session.name);
+  },
+
+  _showDeleteRoomModal(roomId, roomName) {
+    const modal = document.getElementById('deleteRoomModal');
+    const nameEl = document.getElementById('deleteRoomName');
+    const confirmBtn = document.getElementById('deleteRoomModalConfirm');
+    const cancelBtn = document.getElementById('deleteRoomModalCancel');
+    const closeBtn = document.getElementById('deleteRoomModalClose');
+
+    if (!modal) {
+      console.error('[UI] deleteRoomModal not found');
+      return;
+    }
+
+    // 设置名称
+    nameEl.textContent = roomName;
+
+    // 显示弹窗
+    modal.style.display = 'flex';
+
+    // 绑定事件 - 克隆替换以清除旧事件监听器
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    const newCloseBtn = closeBtn.cloneNode(true);
+
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+
+    // 确认删除
+    newConfirmBtn.addEventListener('click', () => {
+      try {
+        window.sessionManager.deleteSession(roomId);
+        this.renderRoomList();
+        this._showHint(`已删除房间：${roomName}`);
+      } catch (error) {
+        this._showHint('删除失败：' + error.message);
+      }
+      modal.style.display = 'none';
+    });
+
+    // 取消删除
+    const closeHandler = () => {
+      modal.style.display = 'none';
+    };
+
+    newCancelBtn.addEventListener('click', closeHandler);
+    newCloseBtn.addEventListener('click', closeHandler);
   },
 
   _showModal(title, connection) {
@@ -346,13 +621,17 @@ const UIManager = {
 
     try {
       if (connId) {
-        // 编辑现有连接
+        // 编辑现有连接 - 更新 ConnectionManager 和 SessionManager
         window.connectionManager.updateConnection(connId, { name, gatewayUrl, token, sessionKey });
+        // 同步所有字段到 SessionManager 进行持久化
+        window.sessionManager.updateSession(connId, { name, gatewayUrl, token, sessionKey });
       } else {
-        // 添加新连接
-        const newConn = window.connectionManager.addConnection({ name, gatewayUrl, token, sessionKey });
+        // 添加新连接 - 通过 SessionManager 创建并持久化
+        const newSession = window.sessionManager.createSession('connection', {
+          name, gatewayUrl, token, sessionKey
+        });
         // 自动连接到新连接
-        window.connectionManager.switchConnection(newConn.id);
+        window.connectionManager.switchConnection(newSession.id);
       }
 
       this.hideModal();
@@ -367,17 +646,47 @@ const UIManager = {
 
   // ========== 右键菜单 ==========
 
-  _showContextMenu(event, connId) {
+  _showContextMenu(event, id, type = 'connection') {
     const menu = document.getElementById('contextMenu');
     if (!menu) return;
 
-    // 定位菜单
-    menu.style.left = event.pageX + 'px';
-    menu.style.top = event.pageY + 'px';
-    menu.style.display = 'block';
+    // 获取配置
+    const config = this.MENU_CONFIG[type];
+    if (!config) {
+      console.warn('[UI] Unknown menu type:', type);
+      return;
+    }
 
-    // 保存当前 UIManager 引用和 connId 到菜单元素上
-    menu.dataset.connId = connId;
+    // 先显示菜单以获取其尺寸
+    menu.style.display = 'block';
+    menu.style.visibility = 'hidden';
+
+    const menuRect = menu.getBoundingClientRect();
+    const windowHeight = window.innerHeight;
+    const windowWidth = window.innerWidth;
+
+    // 计算位置，确保不超出窗口边界
+    let left = event.pageX;
+    let top = event.pageY;
+
+    // 检查右边界
+    if (left + menuRect.width > windowWidth) {
+      left = windowWidth - menuRect.width - 8;
+    }
+
+    // 检查下边界 - 如果超出，向上显示
+    if (top + menuRect.height > windowHeight) {
+      top = windowHeight - menuRect.height - 8;
+    }
+
+    // 应用位置
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    menu.style.visibility = 'visible';
+
+    // 保存类型和 ID 到菜单元素上
+    menu.dataset.targetType = type;
+    menu.dataset.targetId = id;
 
     // 清除旧的事件监听器
     menu.querySelectorAll('.context-menu-item').forEach(item => {
@@ -386,15 +695,31 @@ const UIManager = {
       }
     });
 
+    // 根据配置显示/隐藏菜单项
+    menu.querySelectorAll('.context-menu-item').forEach(item => {
+      const action = item.dataset.action;
+      // 如果操作不在配置中，隐藏该项
+      if (!config.actions.includes(action)) {
+        item.style.display = 'none';
+      } else {
+        item.style.display = '';
+      }
+    });
+
     // 绑定菜单事件
     const self = this;
     menu.querySelectorAll('.context-menu-item').forEach(item => {
+      const action = item.dataset.action;
+
+      // 只为配置中的操作绑定事件
+      if (!config.actions.includes(action)) return;
+
       const handler = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const action = item.dataset.action;
-        const targetConnId = menu.dataset.connId;
-        self._handleContextMenuAction(action, targetConnId);
+        const targetId = menu.dataset.targetId;
+        const targetType = menu.dataset.targetType;
+        self._handleContextMenuAction(action, targetId, targetType);
         menu.style.display = 'none';
       };
       item._menuHandler = handler;
@@ -413,20 +738,27 @@ const UIManager = {
     }, 0);
   },
 
-  _handleContextMenuAction(action, connId) {
-    switch (action) {
-      case 'edit':
-        this.showEditConnectionModal(connId);
-        break;
-      case 'copy':
-        this._copyConnection(connId);
-        break;
-      case 'reconnect':
-        window.connectionManager.reconnect(connId);
-        break;
-      case 'delete':
-        this._deleteConnection(connId);
-        break;
+  _handleContextMenuAction(action, id, type) {
+    // 使用配置化的处理方法映射
+    const actionHandlers = {
+      connection: {
+        edit: (connId) => this.showEditConnectionModal(connId),
+        copy: (connId) => this._copyConnection(connId),
+        reconnect: (connId) => window.connectionManager.reconnect(connId),
+        delete: (connId) => this._deleteConnection(connId)
+      },
+      room: {
+        edit: (roomId) => this._showEditRoomModal(roomId),
+        copy: (roomId) => this._copyRoom(roomId),
+        delete: (roomId) => this._deleteRoom(roomId)
+      }
+    };
+
+    const handlers = actionHandlers[type];
+    if (handlers && handlers[action]) {
+      handlers[action](id);
+    } else {
+      console.warn('[UI] Unknown action:', action, 'for type:', type);
     }
   },
 
@@ -434,14 +766,20 @@ const UIManager = {
     const conn = window.connectionManager.getConnection(connId);
     if (!conn) return;
 
-    const newConn = window.connectionManager.addConnection({
-      name: conn.name + ' (副本)',
-      gatewayUrl: conn.gatewayUrl,
-      token: conn.token,
-      sessionKey: conn.sessionKey
-    });
+    try {
+      // 通过 SessionManager 创建并持久化
+      const newSession = window.sessionManager.createSession('connection', {
+        name: conn.name + ' (副本)',
+        gatewayUrl: conn.gatewayUrl,
+        token: conn.token,
+        sessionKey: conn.sessionKey
+      });
 
-    this.renderConnectionList();
+      this.renderConnectionList();
+      this._showHint(`已复制连接：${newSession.name}`);
+    } catch (error) {
+      this._showHint(`复制失败：${error.message}`);
+    }
   },
 
   _deleteConnection(connId) {
@@ -479,7 +817,8 @@ const UIManager = {
     // 确认删除
     newConfirmBtn.addEventListener('click', () => {
       try {
-        window.connectionManager.deleteConnection(connId);
+        // 从 SessionManager 删除（会同时从 ConnectionManager 删除并持久化）
+        window.sessionManager.deleteSession(connId);
         this.renderConnectionList();
       } catch (error) {
         alert('删除失败：' + error.message);
@@ -591,6 +930,13 @@ const UIManager = {
       // 隐藏房间状态栏
       if (roomStatusBar) roomStatusBar.style.display = 'none';
 
+      // 切换回普通连接 - 清除房间模式状态
+      if (window.state) {
+        window.state.isInRoomMode = false;
+        window.state.currentSessionId = roomId;
+        window.state.currentRoomId = null;  // 清除房间 ID
+      }
+
       // 切换回普通连接
       const connItem = document.querySelector(`.conn-item[data-id="${roomId}"]`);
       if (connItem) connItem.classList.add('active');
@@ -601,6 +947,12 @@ const UIManager = {
     const aiInteractionToggle = document.getElementById('aiInteractionToggle');
     const loopToggle = document.getElementById('conversationLoopToggle');
     const stopBtn = document.getElementById('stopLoopBtn');
+
+    // 确保公共聊天模式下不操作房间数据
+    if (window.state) {
+      window.state.isInRoomMode = false;
+      window.state.currentRoomId = null;  // 清除房间 ID，避免误操作
+    }
 
     // 更新参与者显示
     this._updateParticipantsDisplay();
@@ -692,16 +1044,33 @@ const UIManager = {
 
   // 更新参与者显示（精简版 + tooltip）
   _updateParticipantsDisplay() {
-    // 从 roomManager 获取参与者 ID 列表
-    const participantIds = window.roomManager ? Array.from(window.roomManager.participantIds) : [];
+    // 获取参与者 ID 列表（优先从当前房间 session 获取）
+    let participantIds = [];
+    let currentRoomId = null;
+
+    // 检查是否在房间模式
+    if (window.state && window.state.currentRoomId) {
+      currentRoomId = window.state.currentRoomId;
+    }
+
+    if (currentRoomId && window.sessionManager) {
+      // 从房间 session 获取参与者
+      const session = window.sessionManager.getSession(currentRoomId);
+      if (session && session.participants) {
+        participantIds = session.participants.map(p => p.connId);
+      }
+    } else if (window.roomManager) {
+      // 向后兼容：从 roomManager 获取（公共聊天模式）
+      participantIds = Array.from(window.roomManager.participantIds);
+    }
 
     // 根据 ID 获取完整的连接信息
     const participants = participantIds
       .map(id => window.connectionManager?.getConnection(id))
-      .filter(conn => conn && conn.status === 'connected');
+      .filter(conn => conn != null);  // 显示所有配置的连接，不限于已连接的
 
-    // 获取所有可用的连接（已连接的）
-    const allConnections = window.connectionManager?.getParticipants() || [];
+    // 获取所有可用的连接（所有配置的连接，不仅限已连接）
+    const allConnections = window.connectionManager?.getAllConnections() || [];
 
     const countEl = document.getElementById('participantsCount');
     const tooltipEl = document.getElementById('participantsTooltip');
@@ -827,7 +1196,7 @@ const UIManager = {
     }
   },
 
-  // 添加参与者到公共聊天室
+  // 添加参与者到房间
   _addParticipant(connId) {
     console.log('[UI] _addParticipant 被调用，connId:', connId);
 
@@ -836,17 +1205,31 @@ const UIManager = {
     const conn = window.connectionManager.getConnection(connId);
     if (!conn) return;
 
-    // 添加到房间管理器
-    if (window.roomManager) {
-      window.roomManager.addParticipant(connId);
-      console.log('[UI] 已将', conn.name, '加入房间');
+    // 检查是否在房间模式
+    const currentRoomId = window.state?.currentRoomId;
 
-      // 更新参与者显示
+    if (currentRoomId && window.sessionManager) {
+      // 房间模式：通过 SessionManager 添加参与者
+      const success = window.sessionManager.addParticipantToRoom(currentRoomId, connId);
+      if (success) {
+        console.log('[UI] 已将', conn.name, '加入房间', currentRoomId);
+        // 重新加载房间 session 并更新参与者显示
+        const updatedSession = window.sessionManager.getSession(currentRoomId);
+        this._updateParticipantsDisplay();
+        // 保存房间消息
+        if (updatedSession) {
+          window.Storage.saveSession(updatedSession);
+        }
+      }
+    } else if (window.roomManager) {
+      // 公共聊天模式：添加到 roomManager
+      window.roomManager.addParticipant(connId);
+      console.log('[UI] 已将', conn.name, '加入公共聊天');
       this._updateParticipantsDisplay();
     }
   },
 
-  // 移除单个参与者（从公共聊天室移除，不删除连接）
+  // 移除单个参与者（从房间移除，不删除连接）
   _removeParticipant(connId) {
     console.log('[UI] _removeParticipant 被调用，connId:', connId);
 
@@ -861,31 +1244,52 @@ const UIManager = {
       return;
     }
 
-    console.log('[UI] 准备从公共聊天室移除:', conn.name);
+    console.log('[UI] 准备移除:', conn.name);
 
-    // 只从房间管理器中移除参与者，不删除连接
-    if (window.roomManager) {
+    // 检查是否在房间模式
+    const currentRoomId = window.state?.currentRoomId;
+
+    if (currentRoomId && window.sessionManager) {
+      // 房间模式：通过 SessionManager 移除参与者
+      const success = window.sessionManager.removeParticipantFromRoom(currentRoomId, connId);
+      if (success) {
+        console.log('[UI] 已从房间', currentRoomId, '移除', conn.name);
+        // 更新参与者显示
+        this._updateParticipantsDisplay();
+        // 保存房间 session
+        const session = window.sessionManager.getSession(currentRoomId);
+        if (session) {
+          window.Storage.saveSession(session);
+        }
+      }
+    } else if (window.roomManager) {
+      // 公共聊天模式：从 roomManager 移除
       window.roomManager.removeParticipant(connId);
-      console.log('[UI] 已从房间移除参与者');
-
-      // 更新参与者显示
+      console.log('[UI] 已从公共聊天移除', conn.name);
       this._updateParticipantsDisplay();
     }
   },
 
-  // 移除所有参与者（从公共聊天室移除，不删除连接）
+  // 移除所有参与者（从房间移除，不删除连接）
   _removeAllParticipants() {
     if (!window.connectionManager) return;
 
-    const participants = window.connectionManager.getParticipants();
-    if (participants.length === 0) return;
+    // 检查是否在房间模式
+    const currentRoomId = window.state?.currentRoomId;
 
-    // 只从房间管理器中清空参与者，不删除连接
-    if (window.roomManager) {
+    if (currentRoomId && window.sessionManager) {
+      // 房间模式：清空 session.participants
+      const session = window.sessionManager.getSession(currentRoomId);
+      if (session && session.participants && session.participants.length > 0) {
+        session.participants = [];
+        window.Storage.saveSession(session);
+        console.log('[UI] 已从房间', currentRoomId, '移除所有参与者');
+        this._updateParticipantsDisplay();
+      }
+    } else if (window.roomManager) {
+      // 公共聊天模式：清空 roomManager.participantIds
       window.roomManager.participantIds.clear();
-      console.log('[UI] 已从房间移除所有参与者');
-
-      // 更新参与者显示
+      console.log('[UI] 已从公共聊天移除所有参与者');
       this._updateParticipantsDisplay();
     }
   },

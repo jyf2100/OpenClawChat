@@ -105,7 +105,7 @@ class ConnectionManager {
       sessionKey: config.sessionKey
     });
 
-    Storage.saveConnections(this.connections);
+    // 持久化由 SessionManager 处理，不再使用旧的 Storage.saveConnections()
 
     // 如果关键配置改变，重新连接
     if (oldGateway !== conn.gatewayUrl || oldToken !== conn.token || oldSession !== conn.sessionKey) {

@@ -10,6 +10,33 @@ class SessionManager {
   // 设置连接管理器（用于依赖注入）
   setConnectionManager(connectionManager) {
     this.connectionManager = connectionManager;
+
+    // 将已加载的连接同步到 ConnectionManager
+    //（因为 init() 可能在 setConnectionManager() 之前执行）
+    if (this.sessions.size > 0) {
+      for (const [id, session] of this.sessions) {
+        if (session.type === 'connection' && connectionManager) {
+          const existingConn = connectionManager.getConnection(id);
+          if (!existingConn) {
+            connectionManager.addConnection({
+              id: session.id,
+              name: session.name,
+              gatewayUrl: session.gatewayUrl,
+              token: session.token,
+              sessionKey: session.sessionKey
+            });
+            console.log('[SessionManager] Synced connection to ConnectionManager:', session.name);
+          }
+        }
+      }
+
+      // 同步活跃连接 ID
+      const activeSession = this.sessions.get(this.activeSessionId);
+      if (activeSession && activeSession.type === 'connection') {
+        connectionManager.activeConnectionId = activeSession.id;
+        console.log('[SessionManager] Set active connection:', activeSession.name);
+      }
+    }
   }
 
   // 初始化
@@ -18,6 +45,22 @@ class SessionManager {
     const sessions = window.Storage.getSessions();
     for (const [id, session] of Object.entries(sessions)) {
       this.sessions.set(id, session);
+
+      // 将连接类型的 session 同步到 ConnectionManager
+      if (session.type === 'connection' && this.connectionManager) {
+        // 检查 ConnectionManager 中是否已有此连接（避免重复添加）
+        const existingConn = this.connectionManager.getConnection(id);
+        if (!existingConn) {
+          this.connectionManager.addConnection({
+            id: session.id,
+            name: session.name,
+            gatewayUrl: session.gatewayUrl,
+            token: session.token,
+            sessionKey: session.sessionKey
+          });
+          console.log('[SessionManager] Synced connection to ConnectionManager:', session.name);
+        }
+      }
     }
 
     // 加载活跃会话
@@ -27,6 +70,29 @@ class SessionManager {
     if (!this.activeSessionId && this.sessions.size > 0) {
       this.activeSessionId = Array.from(this.sessions.keys())[0];
       window.Storage.setActiveSession(this.activeSessionId);
+    }
+
+    // 同步活跃连接 ID 到 ConnectionManager
+    if (this.connectionManager) {
+      const activeSession = this.sessions.get(this.activeSessionId);
+      if (activeSession && activeSession.type === 'connection') {
+        this.connectionManager.activeConnectionId = activeSession.id;
+        console.log('[SessionManager] Set active connection:', activeSession.name);
+      } else if (activeSession && activeSession.type === 'room' && activeSession.participants.length > 0) {
+        // 如果活跃会话是房间，将第一个参与者设为活跃连接
+        const firstParticipant = activeSession.participants[0];
+        if (firstParticipant && this.connectionManager.getConnection(firstParticipant.connId)) {
+          this.connectionManager.activeConnectionId = firstParticipant.connId;
+          console.log('[SessionManager] Set active connection from room:', firstParticipant.name);
+        }
+      } else {
+        // 没有活跃连接，尝试设置第一个连接
+        const firstConn = Array.from(this.sessions.values()).find(s => s.type === 'connection');
+        if (firstConn && this.connectionManager.getConnection(firstConn.id)) {
+          this.connectionManager.activeConnectionId = firstConn.id;
+          console.log('[SessionManager] Set first connection as active:', firstConn.name);
+        }
+      }
     }
 
     console.log('[SessionManager] Loaded', this.sessions.size, 'sessions');
@@ -92,6 +158,101 @@ class SessionManager {
     }
 
     return true;
+  }
+
+  updateSession(sessionId, updates) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.warn('[SessionManager] Session not found:', sessionId);
+      return false;
+    }
+
+    // 更新允许的字段
+    // connection 类型: name, gatewayUrl, token, sessionKey
+    // room 类型: name
+    const allowedFields = ['name', 'gatewayUrl', 'token', 'sessionKey'];
+    for (const field of allowedFields) {
+      if (updates.hasOwnProperty(field)) {
+        session[field] = updates[field];
+      }
+    }
+
+    // 更新 normalizedRoomName（如果修改了名称）
+    if (updates.name && session.type === 'room') {
+      session.normalizedRoomName = this.normalizeRoomName(updates.name);
+      session.roomId = `room:${session.normalizedRoomName}`;
+    }
+
+    // 保存到存储
+    window.Storage.saveSession(session);
+
+    console.log('[SessionManager] Updated session:', sessionId, updates);
+    return true;
+  }
+
+  // ========== 业务逻辑方法 ==========
+
+  /**
+   * 复制会话（主要用于房间）
+   * @param {string} sessionId - 要复制的会话 ID
+   * @returns {Object|null} 新创建的会话对象，失败返回 null
+   */
+  copySession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.warn('[SessionManager] Session not found:', sessionId);
+      return null;
+    }
+
+    if (session.type !== 'room') {
+      console.warn('[SessionManager] Only rooms can be copied:', sessionId);
+      return null;
+    }
+
+    // 提取参与者连接 ID
+    const participantIds = session.participants?.map(p => p.connId) || [];
+
+    // 创建新房间
+    const newRoom = this._createRoomSession({
+      name: session.name + ' (副本)',
+      participantIds: participantIds
+    });
+
+    // 保存到会话存储
+    this.sessions.set(newRoom.id, newRoom);
+    window.Storage.saveSession(newRoom);
+
+    console.log('[SessionManager] Copied room:', sessionId, '->', newRoom.id);
+    return newRoom;
+  }
+
+  /**
+   * 验证会话名称
+   * @param {string} name - 要验证的名称
+   * @returns {Object} { valid: boolean, errors: string[] }
+   */
+  validateSessionName(name) {
+    const errors = [];
+
+    if (!name || typeof name !== 'string') {
+      errors.push('名称不能为空');
+      return { valid: false, errors };
+    }
+
+    const trimmed = name.trim();
+
+    if (!trimmed) {
+      errors.push('名称不能为空');
+    }
+
+    if (trimmed.length > 20) {
+      errors.push('名称不能超过 20 个字符');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
   }
 
   switchSession(sessionId) {
