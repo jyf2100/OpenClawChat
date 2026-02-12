@@ -1,0 +1,105 @@
+.context-menu-container {
+  position: fixed;
+  z-index: 10000;
+  min-width: 180px;
+  background-color: rgba(255, 255, 255, 0.95);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06),
+    0 12px 32px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  animation: context-menu-scale-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
+  overflow: hidden;
+}
+
+.dark .context-menu-container {
+  background-color: rgba(40, 40, 40, 0.9);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.2),
+    0 2px 4px -1px rgba(0, 0, 0, 0.1),
+    0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu-item {
+  width: 100%;
+  padding: 8px 10px;
+  background-color: transparent;
+  border: none;
+  color: var(--text-normal);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  transition: all 0.1s ease;
+  text-align: left;
+  outline: none;
+  margin-bottom: 2px;
+}
+
+.context-menu-item:last-child {
+  margin-bottom: 0;
+}
+
+.context-menu-item:hover, .context-menu-item:focus {
+  background-color: var(--accent);
+  color: white;
+}
+
+.context-menu-item:active {
+  transform: scale(0.98);
+}
+
+.context-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-menu-item:disabled:hover {
+  background-color: transparent;
+  color: var(--text-normal);
+}
+
+.context-menu-item.danger {
+  color: var(--danger);
+}
+
+.context-menu-item.danger:hover {
+  background-color: var(--danger);
+  color: white;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background-color: var(--divider);
+  margin: 4px 6px;
+  opacity: 0.5;
+}
+
+.context-menu-icon {
+  font-size: 16px;
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+}
+
+@keyframes context-menu-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
