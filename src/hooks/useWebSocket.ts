@@ -35,6 +35,8 @@ interface ConnectionState {
   reconnectTimeout: ReturnType<typeof setTimeout> | null;
   token?: string;
   url?: string;
+  // 存储 pending 请求的超时 ID，用于清理
+  pendingTimeouts: Map<string, ReturnType<typeof setTimeout>>;
 }
 
 export interface UseWebSocketOptions {
@@ -92,6 +94,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         pending: new Map(),
         reconnectAttempts: 0,
         reconnectTimeout: null,
+        pendingTimeouts: new Map(),
       };
       connectionsRef.current.set(gatewayId, conn);
     }
@@ -172,13 +175,15 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       }
 
       // 设置超时
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         const pending = conn.pending.get(id);
         if (pending) {
           conn.pending.delete(id);
+          conn.pendingTimeouts.delete(id);
           pending.reject(new Error('连接超时'));
         }
       }, DEFAULTS.requestTimeout);
+      conn.pendingTimeouts.set(id, timeoutId);
     }).then((response) => {
       updateConnectionStatus(gatewayId, 'connected');
       conn.reconnectAttempts = 0;
@@ -227,6 +232,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         const pending = conn.pending.get(responseMsg.id);
         if (!pending) return;
 
+        // 清理超时定时器
+        const timeoutId = conn.pendingTimeouts.get(responseMsg.id);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          conn.pendingTimeouts.delete(responseMsg.id);
+        }
+
         conn.pending.delete(responseMsg.id);
         if (responseMsg.ok) {
           pending.resolve(responseMsg.payload);
@@ -265,15 +277,34 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       }
 
       // 设置超时
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         const pending = conn.pending.get(id);
         if (pending) {
           conn.pending.delete(id);
+          conn.pendingTimeouts.delete(id);
           pending.reject(new Error('请求超时'));
         }
       }, DEFAULTS.requestTimeout);
+      conn.pendingTimeouts.set(id, timeoutId);
     });
   }, [getConnection]);
+
+  // 清理所有 pending 请求
+  const clearAllPending = useCallback(() => {
+    connectionsRef.current.forEach((conn, gatewayId) => {
+      // 清理所有 pending 请求的 timeout
+      conn.pendingTimeouts.forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+      });
+      conn.pendingTimeouts.clear();
+
+      // Reject 所有 pending 请求
+      conn.pending.forEach((request, _requestId) => {
+        request.reject(new Error(`Connection closed for gateway: ${gatewayId}`));
+      });
+      conn.pending.clear();
+    });
+  }, []);
 
   // 连接方法
   const connect = useCallback(async (gatewayUrl: string, token: string, gatewayId: string) => {
@@ -386,12 +417,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       .map(([id]) => id);
   }, []);
 
-  // 组件卸载时断开所有连接
+  // 组件卸载时断开所有连接并清理资源
   useEffect(() => {
     return () => {
+      clearAllPending();
       disconnectAll();
     };
-  }, [disconnectAll]);
+  }, [clearAllPending, disconnectAll]);
 
   return {
     getStatus,

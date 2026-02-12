@@ -2,7 +2,7 @@
  * 消息气泡组件
  */
 
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback, memo, useMemo } from 'react';
 import type { RenderedMessage } from '../../types';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 import { ImagePreview } from './ImagePreview';
@@ -18,6 +18,9 @@ export interface MessageItemProps {
   className?: string;
   isSelectionMode?: boolean;
   onToggleSelection?: (messageId: string) => void;
+  isLastMessage?: boolean;
+  _onCopyCode?: (code: string) => void;
+  _isLastMessage?: boolean;
 }
 
 /**
@@ -146,81 +149,87 @@ function StreamingIndicator() {
 }
 
 /**
- * 简单的 Markdown 渲染器
+ * 简单的 Markdown 渲染器 - 使用 useMemo 缓存解析结果
  */
-function SimpleMarkdown({ content }: { content: string }) {
-  const lines = content.split('\n');
-  const elements: React.ReactNode[] = [];
-  let inCodeBlock = false;
-  let codeContent = '';
-  let codeLanguage = 'text';
+const SimpleMarkdown = memo(function SimpleMarkdownComponent({ content }: { content: string }) {
+  const elements = useMemo(() => {
+    if (!content) return [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const lines = content.split('\n');
+    const result: React.ReactNode[] = [];
+    let inCodeBlock = false;
+    let codeContent = '';
+    let codeLanguage = 'text';
 
-    // 检查代码块
-    if (line.startsWith('```')) {
-      if (inCodeBlock) {
-        // 结束代码块
-        elements.push(
-          <CodeBlock key={`code-${i}`} code={codeContent.trim()} language={codeLanguage} />
-        );
-        inCodeBlock = false;
-        codeContent = '';
-        codeLanguage = 'text';
-      } else {
-        // 开始代码块，提取语言标识
-        const languageMatch = line.match(/^```(\w+)?/);
-        codeLanguage = languageMatch?.[1] || 'text';
-        inCodeBlock = true;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // 检查代码块
+      const isCodeBlock = line.trim().startsWith('```');
+      if (isCodeBlock) {
+        if (inCodeBlock) {
+          result.push(
+            <CodeBlock key={`code-${i}`} code={codeContent.trim()} language={codeLanguage} />
+          );
+          inCodeBlock = false;
+          codeContent = '';
+          codeLanguage = 'text';
+        } else {
+          const languageMatch = line.trim().match(/^```(\w+)?/);
+          codeLanguage = languageMatch?.[1] || 'text';
+          inCodeBlock = true;
+        }
+        continue;
       }
-      continue;
+
+      if (inCodeBlock) {
+        codeContent += line + '\n';
+        continue;
+      }
+
+      // 检查引用
+      if (line.trim().startsWith('>')) {
+        const quoteContent = line.trim().substring(1).trim();
+        result.push(
+          <div key={`quote-${i}`} className="message-quote">
+            <div className="message-quote-content">{quoteContent}</div>
+          </div>
+        );
+        continue;
+      }
+
+      // 处理普通文本
+      if (line.trim()) {
+        result.push(
+          <p key={`text-${i}`} className="mb-0 last:mb-0">
+            {line}
+          </p>
+        );
+      } else {
+        result.push(<br key={`br-${i}`} />);
+      }
     }
 
-    if (inCodeBlock) {
-      codeContent += line + '\n';
-      continue;
-    }
-
-    // 检查引用
-    if (line.trim().startsWith('>')) {
-      const quoteContent = line.trim().substring(1).trim();
-      elements.push(
-        <div key={`quote-${i}`} className="message-quote">
-          <div className="message-quote-content">{quoteContent}</div>
-        </div>
-      );
-      continue;
-    }
-
-    // 处理普通文本（简化版，只处理换行）
-    if (line.trim()) {
-      elements.push(
-        <p key={`text-${i}`} className="mb-0 last:mb-0">
-          {line}
-        </p>
-      );
-    } else {
-      elements.push(<br key={`br-${i}`} />);
-    }
-  }
+    return result;
+  }, [content]);
 
   return <>{elements}</>;
-}
+});
 
 /**
- * 消息气泡组件
+ * 消息气泡组件 - 使用 memo 优化避免不必要的重渲染
  */
-export function MessageItem({
-  message,
-  onImageClick,
-  onAction,
-  isGrouped = false,
-  showHeader = true,
-  className = '',
-  isSelectionMode = false,
-  onToggleSelection,
-}: MessageItemProps) {
+const MessageItem = memo(function MessageItemComponent(props: MessageItemProps) {
+  const {
+    message,
+    onImageClick,
+    onAction,
+    isGrouped = false,
+    showHeader = true,
+    className = '',
+    isSelectionMode = false,
+    onToggleSelection,
+  } = props;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
 
@@ -237,10 +246,9 @@ export function MessageItem({
   // 处理右键菜单
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation(); // 阻止冒泡，防止被全局监听器立即关闭
+    e.stopPropagation();
     
     if (isSelectionMode) {
-      // 多选模式下禁用右键，或者仅保留“取消多选”
       return;
     }
 
@@ -419,7 +427,7 @@ export function MessageItem({
             >
               {/* 文本内容 */}
               {message.text && (
-                <div className={`prose prose-sm max-w-none ${isUser ? 'prose-invert' : 'dark:prose-invert'}`}>
+                <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                   {message.streaming && message.loading ? (
                     <div className="flex items-center gap-2">
                       <StreamingIndicator />
@@ -475,9 +483,7 @@ export function MessageItem({
       )}
     </>
   );
-}
+});
 
-/**
- * 导出一个默认组件
- */
+export { MessageItem };
 export default MessageItem;

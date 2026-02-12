@@ -1,5 +1,5 @@
 // 连接池管理
-use crate::protocol::websocket::{WsConnectionPool, WsClientError};
+use crate::protocol::websocket::WsConnectionPool;
 use crate::protocol::types::{ConnectionStatus, EventMessage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -45,13 +45,13 @@ impl ConnectionManager {
 
     pub async fn send_message(&self, gateway_id: &str, session_key: String, message: String) -> Result<serde_json::Value, String> {
         let pool = self.pool.read().await;
-        let client = pool.get_connection(gateway_id).await.ok_or_else(|| format!("网关 {} 未连接", gateway_id))?;
+        let client = pool.get_connection(gateway_id).ok_or_else(|| format!("网关 {} 未连接", gateway_id))?;
         client.send_message(session_key, message).await.map_err(|e| e.to_string())
     }
 
     pub async fn get_status(&self, gateway_id: &str) -> Result<ConnectionStatus, String> {
         let pool = self.pool.read().await;
-        let client = pool.get_connection(gateway_id).await.ok_or_else(|| format!("网关 {} 未连接", gateway_id))?;
+        let client = pool.get_connection(gateway_id).ok_or_else(|| format!("网关 {} 未连接", gateway_id))?;
         Ok(client.get_status().await)
     }
 
@@ -60,6 +60,6 @@ impl ConnectionManager {
     }
 
     pub async fn has_connection(&self, gateway_id: &str) -> bool {
-        self.pool.read().await.get_connection(gateway_id).await.is_some()
+        self.pool.read().await.get_connection(gateway_id).is_some()
     }
 }

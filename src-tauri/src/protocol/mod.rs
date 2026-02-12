@@ -3,4 +3,4 @@ pub mod types;
 pub mod websocket;
 
 pub use types::*;
-pub use websocket::{WsClient, WsClientError, WsConnectionPool};
+pub use websocket::WsConnectionPool;

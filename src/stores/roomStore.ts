@@ -2,10 +2,21 @@ import { create } from "zustand";
 import { Room, Message } from "../types";
 import { roomStorage, messageStorage } from "../lib/storage";
 
+// 内存中保留的最大消息数量
+const MAX_MESSAGES_IN_MEMORY = 500;
+
+// 优化的消息存储结构
+interface RoomMessages {
+  byId: Map<string, Message>;  // O(1) 查找
+  ids: string[];                // 有序 ID 列表
+  version: number;              // 版本号，用于乐观更新检测
+}
+
 interface RoomStore {
   rooms: Room[];
   activeRoomId: string | null;
-  messages: Record<string, Message[]>;
+  // 内部使用优化结构，外部接口保持兼容
+  _roomMessages: Record<string, RoomMessages>;
   _initialized: boolean;
 
   // Actions
@@ -22,12 +33,16 @@ interface RoomStore {
   getMessages: (roomId: string) => Message[];
   clearMessages: (roomId: string) => Promise<void>;
   initDefaultRoom: (gatewayId?: string) => void;
+  // 获取消息数量（用于分页）
+  getMessageCount: (roomId: string) => number;
+  // 获取分页消息
+  getMessagesPaginated: (roomId: string, page: number, pageSize: number) => Message[];
 }
 
 export const useRoomStore = create<RoomStore>((set, get) => ({
   rooms: [],
   activeRoomId: null,
-  messages: {},
+  _roomMessages: {},
   _initialized: false,
 
   // 初始化：从存储加载数据
@@ -48,15 +63,15 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
 
       // 1. 迁移旧的 room:default:* 房间到 default:agent:main:main
       // 2. 迁移旧的 agent:main:main 到 default:agent:main:main
-      const oldDefaultRooms = migratedRooms.filter(r => 
-        r.id.startsWith('room:default:') || 
+      const oldDefaultRooms = migratedRooms.filter(r =>
+        r.id.startsWith('room:default:') ||
         (r.id === 'agent:main:main' && r.gatewayId === 'default')
       );
 
       if (oldDefaultRooms.length > 0) {
         console.log('[RoomStore] 发现旧格式房间，开始迁移:', oldDefaultRooms);
         const targetId = 'default:agent:main:main';
-        
+
         // 确保目标房间存在
         if (!existingRoomIds.has(targetId)) {
           migratedRooms.push({
@@ -77,7 +92,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
             const targetMessages = allMessages[targetId] || [];
             // 合并并去重
             const merged = [...targetMessages, ...oldMessages].sort((a, b) => a.timestamp - b.timestamp);
-            const unique = merged.filter((msg, index, self) => 
+            const unique = merged.filter((msg, index, self) =>
               index === self.findIndex((m) => m.id === msg.id)
             );
             allMessages[targetId] = unique;
@@ -92,17 +107,17 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         needsMigration = true;
       }
 
-      // 恢复“幽灵”房间（有消息但没房间记录）
+      // 恢复"幽灵"房间（有消息但没房间记录）
       for (const roomId of messageRoomIds) {
         if (existingRoomIds.has(roomId)) continue;
-        if (roomId.startsWith('room:default:')) continue; 
+        if (roomId.startsWith('room:default:')) continue;
         if (roomId === 'agent:main:main') continue; // 已处理
 
         // 如果是无前缀的 ID，且不在现有列表中，尝试归类为 default 网关
         // 但根据新规则，所有 ID 必须有前缀。如果发现无前缀的幽灵数据，我们迁移到 default:ID
         let finalRoomId = roomId;
         let gatewayId = 'default';
-        
+
         if (!roomId.includes(':')) {
             finalRoomId = `default:${roomId}`;
             // 迁移消息
@@ -164,7 +179,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
               nextActiveRoomId = `default:${activeSession}`;
           }
       }
-      
+
       if (!nextActiveRoomId || !existingRoomIds.has(nextActiveRoomId)) {
         nextActiveRoomId = migratedRooms[0]?.id ?? null;
       }
@@ -173,15 +188,37 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         await roomStorage.saveActiveSession(nextActiveRoomId || '');
       }
 
+      // 将数组消息转换为优化结构
+      const roomMessages: Record<string, RoomMessages> = {};
+      for (const [roomId, messages] of Object.entries(allMessages)) {
+        if (!messages || messages.length === 0) continue;
+
+        const byId = new Map<string, Message>();
+        const ids: string[] = [];
+
+        for (const msg of messages) {
+          if (!byId.has(msg.id)) {
+            byId.set(msg.id, msg);
+            ids.push(msg.id);
+          }
+        }
+
+        roomMessages[roomId] = {
+          byId,
+          ids,
+          version: 0,
+        };
+      }
+
       set({
         rooms: migratedRooms,
         activeRoomId: nextActiveRoomId,
-        messages: allMessages,
+        _roomMessages: roomMessages,
         _initialized: true,
       });
 
       console.log('[RoomStore] 已加载房间配置:', migratedRooms);
-      console.log('[RoomStore] 已加载消息历史:', Object.keys(allMessages).length, '个房间');
+      console.log('[RoomStore] 已加载消息历史:', Object.keys(roomMessages).length, '个房间');
     } catch (error) {
       console.error('[RoomStore] 初始化失败:', error);
       set({ _initialized: true });
@@ -207,6 +244,11 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     set((state) => ({
       rooms: state.rooms.filter((r) => r.id !== id),
       activeRoomId: state.activeRoomId === id ? null : state.activeRoomId,
+      _roomMessages: (() => {
+        const newRoomMessages = { ...state._roomMessages };
+        delete newRoomMessages[id];
+        return newRoomMessages;
+      })(),
     }));
 
     try {
@@ -251,12 +293,41 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   },
 
   addMessage: async (roomId, message) => {
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [roomId]: [...(state.messages[roomId] || []), message],
-      },
-    }));
+    set((state) => {
+      const roomMsgs = state._roomMessages[roomId];
+
+      // 检查消息是否已存在（去重）
+      if (roomMsgs?.byId.has(message.id)) {
+        console.log(`[RoomStore] 消息已存在，跳过添加: ${message.id}`);
+        return state;
+      }
+
+      // 创建或更新 RoomMessages
+      const newById = roomMsgs ? new Map(roomMsgs.byId) : new Map<string, Message>();
+      const newIds = roomMsgs ? [...roomMsgs.ids] : [];
+
+      newById.set(message.id, message);
+      newIds.push(message.id);
+
+      // 限制内存中保留的消息数量
+      if (newIds.length > MAX_MESSAGES_IN_MEMORY) {
+        const oldestId = newIds.shift();
+        if (oldestId) {
+          newById.delete(oldestId);
+        }
+      }
+
+      return {
+        _roomMessages: {
+          ...state._roomMessages,
+          [roomId]: {
+            byId: newById,
+            ids: newIds,
+            version: (roomMsgs?.version ?? 0) + 1,
+          },
+        },
+      };
+    });
 
     try {
       await messageStorage.addMessage(roomId, message);
@@ -267,24 +338,43 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
 
   updateMessage: async (roomId, messageId, message) => {
     set((state) => {
-      const roomMessages = state.messages[roomId] || [];
-      const index = roomMessages.findIndex((m) => m.id === messageId);
-      if (index === -1) {
-        // 消息不存在，添加新消息
+      const roomMsgs = state._roomMessages[roomId];
+
+      if (!roomMsgs) {
+        // 房间消息不存在，创建新记录
+        const newById = new Map<string, Message>();
+        newById.set(messageId, message);
         return {
-          messages: {
-            ...state.messages,
-            [roomId]: [...roomMessages, message],
+          _roomMessages: {
+            ...state._roomMessages,
+            [roomId]: {
+              byId: newById,
+              ids: [messageId],
+              version: 1,
+            },
           },
         };
       }
-      // 替换现有消息
-      const newMessages = [...roomMessages];
-      newMessages[index] = message;
+
+      // O(1) 查找和更新
+      const newById = new Map(roomMsgs.byId);
+      let newIds = roomMsgs.ids;
+
+      if (!newById.has(messageId)) {
+        // 消息不存在，添加新消息
+        newIds = [...newIds, messageId];
+      }
+
+      newById.set(messageId, message);
+
       return {
-        messages: {
-          ...state.messages,
-          [roomId]: newMessages,
+        _roomMessages: {
+          ...state._roomMessages,
+          [roomId]: {
+            byId: newById,
+            ids: newIds,
+            version: roomMsgs.version + 1,
+          },
         },
       };
     });
@@ -299,13 +389,26 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   deleteMessage: async (roomId, messageId) => {
     console.log(`[RoomStore] 尝试删除消息: room=${roomId}, msg=${messageId}`);
     set((state) => {
-      const roomMessages = state.messages[roomId] || [];
-      const newMessages = roomMessages.filter((m) => m.id !== messageId);
-      console.log(`[RoomStore] 删除结果: ${roomMessages.length} -> ${newMessages.length}`);
+      const roomMsgs = state._roomMessages[roomId];
+      if (!roomMsgs?.byId.has(messageId)) {
+        console.log(`[RoomStore] 消息不存在: ${messageId}`);
+        return state;
+      }
+
+      const newById = new Map(roomMsgs.byId);
+      newById.delete(messageId);
+      const newIds = roomMsgs.ids.filter(id => id !== messageId);
+
+      console.log(`[RoomStore] 删除结果: ${roomMsgs.ids.length} -> ${newIds.length}`);
+
       return {
-        messages: {
-          ...state.messages,
-          [roomId]: newMessages,
+        _roomMessages: {
+          ...state._roomMessages,
+          [roomId]: {
+            byId: newById,
+            ids: newIds,
+            version: roomMsgs.version + 1,
+          },
         },
       };
     });
@@ -320,14 +423,27 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   deleteMessages: async (roomId, messageIds) => {
     console.log(`[RoomStore] 尝试批量删除消息: room=${roomId}, count=${messageIds.length}`);
     set((state) => {
-      const roomMessages = state.messages[roomId] || [];
+      const roomMsgs = state._roomMessages[roomId];
+      if (!roomMsgs) return state;
+
       const idSet = new Set(messageIds);
-      const newMessages = roomMessages.filter((m) => !idSet.has(m.id));
-      console.log(`[RoomStore] 批量删除结果: ${roomMessages.length} -> ${newMessages.length}`);
+      const newById = new Map(roomMsgs.byId);
+
+      for (const id of messageIds) {
+        newById.delete(id);
+      }
+
+      const newIds = roomMsgs.ids.filter((id) => !idSet.has(id));
+      console.log(`[RoomStore] 批量删除结果: ${roomMsgs.ids.length} -> ${newIds.length}`);
+
       return {
-        messages: {
-          ...state.messages,
-          [roomId]: newMessages,
+        _roomMessages: {
+          ...state._roomMessages,
+          [roomId]: {
+            byId: newById,
+            ids: newIds,
+            version: roomMsgs.version + 1,
+          },
         },
       };
     });
@@ -339,13 +455,34 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     }
   },
 
-  getMessages: (roomId) => get().messages[roomId] || [],
+  getMessages: (roomId) => {
+    const roomMsgs = get()._roomMessages[roomId];
+    if (!roomMsgs) return [];
+
+    // 按 ids 顺序返回消息数组
+    return roomMsgs.ids.map(id => roomMsgs.byId.get(id)!).filter(Boolean);
+  },
+
+  getMessageCount: (roomId) => {
+    return get()._roomMessages[roomId]?.ids.length ?? 0;
+  },
+
+  getMessagesPaginated: (roomId, page, pageSize) => {
+    const roomMsgs = get()._roomMessages[roomId];
+    if (!roomMsgs) return [];
+
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    const pageIds = roomMsgs.ids.slice(start, end);
+
+    return pageIds.map(id => roomMsgs.byId.get(id)!).filter(Boolean);
+  },
 
   clearMessages: async (roomId) => {
     set((state) => {
-      const newMessages = { ...state.messages };
-      delete newMessages[roomId];
-      return { messages: newMessages };
+      const newRoomMessages = { ...state._roomMessages };
+      delete newRoomMessages[roomId];
+      return { _roomMessages: newRoomMessages };
     });
 
     try {
@@ -376,10 +513,10 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       console.error('[roomStore] initDefaultRoom: gatewayId 为空');
       return;
     }
-    
+
     // 检查该网关下是否有房间
     const gatewayRooms = state.rooms.filter(r => r.gatewayId === targetGatewayId);
-    
+
     if (gatewayRooms.length === 0) {
       const defaultRoomId = `${targetGatewayId}:agent:main:main`;
       const defaultRoom: Room = {
@@ -389,16 +526,26 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         type: 'channel',
         unreadCount: 0,
       };
-      
+
       // 使用 addRoom 确保持久化
       get().addRoom(defaultRoom);
-      
+
       // 如果没有选中的房间，选中这个新房间
       if (!state.activeRoomId) {
         get().setActiveRoom(defaultRoom.id);
       }
-      
+
       console.log('[RoomStore] 已为网关创建默认房间:', targetGatewayId, defaultRoom);
     }
   },
 }));
+
+// 向后兼容：提供一个获取 messages 对象的 getter
+// 注意：这返回一个新对象，不要频繁调用
+export function getMessagesAsRecord(store: RoomStore): Record<string, Message[]> {
+  const result: Record<string, Message[]> = {};
+  for (const [roomId, roomMsgs] of Object.entries(store._roomMessages)) {
+    result[roomId] = roomMsgs.ids.map(id => roomMsgs.byId.get(id)!).filter(Boolean);
+  }
+  return result;
+}

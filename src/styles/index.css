@@ -1,1 +1,2 @@
-/* 样式已迁移至 globals.css */
+/* 导入全局样式 */
+@import "./globals.css";

@@ -1,6 +1,7 @@
 /**
  * 本地存储工具类
  * 支持 localStorage 和 Tauri store 插件
+ * 包含批量写入和防抖优化
  */
 
 import type {
@@ -8,6 +9,7 @@ import type {
   Message,
   Room,
 } from '../types';
+import { debounce } from 'lodash-es';
 
 /**
  * 存储键定义
@@ -550,16 +552,83 @@ export const settingsStorage = {
 };
 
 /**
+ * 批量消息存储管理器 - 防抖批量写入
+ */
+class BatchedMessageStorage {
+  private batch: Map<string, Message[]> = new Map();
+  private flushDebounced: ReturnType<typeof debounce>;
+  private isFlushing = false;
+
+  constructor() {
+    // 500ms 防抖，最大等待 2000ms
+    this.flushDebounced = debounce(
+      () => this.flush(),
+      500,
+      { maxWait: 2000 }
+    );
+  }
+
+  /**
+   * 将消息添加到批量写入队列
+   */
+  addToBatch(roomId: string, messages: Message[]): void {
+    this.batch.set(roomId, messages);
+    this.flushDebounced();
+  }
+
+  /**
+   * 立即执行批量写入
+   */
+  async flush(): Promise<void> {
+    if (this.isFlushing || this.batch.size === 0) return;
+
+    this.isFlushing = true;
+    const entries = Array.from(this.batch.entries());
+    this.batch.clear();
+
+    try {
+      // 加载现有消息
+      const allMessages = await defaultStorage.get<Record<string, Message[]>>(STORAGE_KEYS.MESSAGES) || {};
+
+      // 合并批量更新
+      for (const [roomId, messages] of entries) {
+        allMessages[roomId] = messages;
+      }
+
+      // 一次性写入
+      await defaultStorage.set(STORAGE_KEYS.MESSAGES, allMessages);
+      console.log(`[BatchedMessageStorage] 批量写入 ${entries.length} 个房间的消息`);
+    } catch (error) {
+      console.error('[BatchedMessageStorage] 批量写入失败:', error);
+      // 将失败的消息放回队列
+      for (const [roomId, messages] of entries) {
+        this.batch.set(roomId, messages);
+      }
+    } finally {
+      this.isFlushing = false;
+    }
+  }
+}
+
+// 批量存储实例
+const batchedStorage = new BatchedMessageStorage();
+
+/**
  * 消息存储操作
  */
 export const messageStorage = {
   /**
-   * 保存消息（按房间分组）
+   * 保存消息（按房间分组）- 使用批量写入
    */
   async saveMessages(roomId: string, messages: Message[]): Promise<void> {
-    const allMessages = await this.loadAllMessages();
-    allMessages[roomId] = messages;
-    await defaultStorage.set(STORAGE_KEYS.MESSAGES, allMessages);
+    batchedStorage.addToBatch(roomId, messages);
+  },
+
+  /**
+   * 立即保存所有待写入的消息
+   */
+  async flushPending(): Promise<void> {
+    await batchedStorage.flush();
   },
 
   /**

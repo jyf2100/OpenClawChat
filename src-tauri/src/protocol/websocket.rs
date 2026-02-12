@@ -1,5 +1,6 @@
 // WebSocket 客户端实现
 use crate::protocol::types::*;
+use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::collections::HashMap;
@@ -7,6 +8,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use uuid::Uuid;
+
+// 最大连接数限制
+const MAX_CONNECTIONS: usize = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WsClientError {
@@ -22,6 +26,8 @@ pub enum WsClientError {
     Timeout,
     #[error("未连接")]
     NotConnected,
+    #[error("达到最大连接数限制")]
+    MaxConnectionsReached,
 }
 
 pub struct WsClient {
@@ -189,17 +195,22 @@ impl WsClient {
 }
 
 pub struct WsConnectionPool {
-    connections: Arc<RwLock<HashMap<String, Arc<WsClient>>>>,
+    connections: Arc<DashMap<String, Arc<WsClient>>>,
 }
 
 impl WsConnectionPool {
     pub fn new() -> Self {
         Self {
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            connections: Arc::new(DashMap::new()),
         }
     }
 
     pub async fn create_connection(&self, gateway_id: String, url: String, token: Option<String>, event_handler: impl Fn(EventMessage) + Send + 'static) -> Result<(), WsClientError> {
+        // 检查连接数限制
+        if self.connections.len() >= MAX_CONNECTIONS {
+            return Err(WsClientError::MaxConnectionsReached);
+        }
+
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let client = Arc::new(WsClient::new(gateway_id.clone(), url, token, event_tx));
 
@@ -211,28 +222,38 @@ impl WsConnectionPool {
 
         client.clone().connect().await?;
         client.clone().handshake().await?;
-        self.connections.write().await.insert(gateway_id, client);
+        self.connections.insert(gateway_id, client);
         Ok(())
     }
 
     pub async fn remove_connection(&self, gateway_id: &str) -> Result<(), WsClientError> {
-        if let Some(client) = self.connections.write().await.remove(gateway_id) {
+        if let Some((_, client)) = self.connections.remove(gateway_id) {
             client.disconnect().await;
         }
         Ok(())
     }
 
-    pub async fn get_connection(&self, gateway_id: &str) -> Option<Arc<WsClient>> {
-        self.connections.read().await.get(gateway_id).cloned()
+    pub fn get_connection(&self, gateway_id: &str) -> Option<Arc<WsClient>> {
+        self.connections.get(gateway_id).map(|entry| entry.value().clone())
+    }
+
+    pub fn get_connection_count(&self) -> usize {
+        self.connections.len()
     }
 
     pub async fn get_all_status(&self) -> Vec<ConnectionStatus> {
-        let connections = self.connections.read().await;
         let mut statuses = Vec::new();
-        for client in connections.values() {
-            statuses.push(client.get_status().await);
+        for entry in self.connections.iter() {
+            statuses.push(entry.value().get_status().await);
         }
         statuses
+    }
+
+    /// 使用 DashMap 提供更细粒度的并发访问
+    pub fn _get_status(&self, _gateway_id: &str) -> Option<ConnectionStatus> {
+        // DashMap 提供更细粒度的锁，但获取状态仍需要异步运行时
+        // 此方法保留供将来使用
+        None
     }
 }
 

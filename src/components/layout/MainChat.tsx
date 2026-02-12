@@ -22,7 +22,7 @@ export const MainChat: React.FC<MainChatProps> = ({
   const [isSelectionMode, setIsSelectionMode] = React.useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = React.useState<Set<string>>(new Set());
 
-  // 转换 ChatMessage 为 RenderedMessage
+  // 转换 ChatMessage 为 RenderedMessage - 只依赖 messages
   const renderedMessages: RenderedMessage[] = useMemo(() => {
     return messages.map((msg) => {
       // 处理内容转换
@@ -62,11 +62,22 @@ export const MainChat: React.FC<MainChatProps> = ({
         time: formatRelativeTime(msg.timestamp),
         streaming: msg.isStreaming || false,
         loading: msg.state === 'sending',
-        // 选中状态
-        isSelected: selectedMessageIds.has(msg.id),
+        // 选中状态将在后续处理
+        isSelected: false,
       };
     });
-  }, [messages, selectedMessageIds]);
+  }, [messages]);
+
+  // 将选择状态应用到渲染消息 - 单独 memo，避免影响消息转换
+  const messagesWithSelection = useMemo(() => {
+    if (!isSelectionMode || selectedMessageIds.size === 0) {
+      return renderedMessages;
+    }
+    return renderedMessages.map(msg => ({
+      ...msg,
+      isSelected: selectedMessageIds.has(msg.id),
+    }));
+  }, [renderedMessages, isSelectionMode, selectedMessageIds]);
 
   const handleToggleSelectionMode = useCallback((initialId?: string) => {
     setIsSelectionMode(true);
@@ -123,7 +134,7 @@ export const MainChat: React.FC<MainChatProps> = ({
   return (
     <div className="main-chat" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
       <MessageList
-        messages={renderedMessages}
+        messages={messagesWithSelection}
         loading={false}
         emptyMessage={isConnected ? "暂无消息，开始对话吧" : "等待连接..."}
         onImageClick={handleImageClick}

@@ -1,5 +1,6 @@
 /* Playful / Soft 风格配色方案 */
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 :root {
   /* 基础配色 - 活泼明亮 */
