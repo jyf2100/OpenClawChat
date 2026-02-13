@@ -393,3 +393,44 @@ body {
     animation: slide-in-pop 0.3s ease-out;
   }
 }
+
+/* ==================== 协作房间样式 ==================== */
+
+@keyframes collaboration-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.95); }
+}
+
+.collaboration-form {
+  margin-top: 8px;
+}
+
+.collaboration-status {
+  animation: collaboration-pulse 2s ease-in-out infinite;
+}
+
+/* ==================== 消息文本样式修复 ==================== */
+
+.message-item p {
+  color: inherit;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.message-item .text-sm {
+  font-size: 14px;
+}
+
+/* 确保用户消息文字是白色的 */
+.message-item [style*="accent-gradient"] p,
+.message-item [style*="accent-gradient"] .text-sm {
+  color: white !important;
+  -webkit-text-fill-color: white !important;
+}
+
+/* 确保助手消息文字颜色正确 */
+.message-item .bg-white p,
+.message-item .bg-gray-800 p {
+  color: inherit;
+  -webkit-text-fill-color: inherit;
+}

@@ -287,14 +287,29 @@ export function MessageList({
 
       const prevMessage = index > 0 ? messages[index - 1] : null;
 
-      const isGrouped = prevMessage && shouldGroupMessages(
-        { role: prevMessage.role, timestamp: getTimestamp(prevMessage) },
-        { role: message.role, timestamp: getTimestamp(message) }
-      );
+      let isGrouped = false;
+      if (prevMessage) {
+        // 如果当前或上一条消息有 collaborationContext，检查是否是同一个参与者
+        const currentCollab = message.collaborationContext;
+        const prevCollab = prevMessage.collaborationContext;
+        
+        if (currentCollab || prevCollab) {
+          // 有协作上下文时，只有同一参与者的消息才分组
+          isGrouped = !!(currentCollab && prevCollab && 
+                      currentCollab.sessionId === prevCollab.sessionId &&
+                      currentCollab.step === prevCollab.step);
+        } else {
+          // 普通消息按时间和角色分组
+          isGrouped = shouldGroupMessages(
+            { role: prevMessage.role, timestamp: getTimestamp(prevMessage) },
+            { role: message.role, timestamp: getTimestamp(message) }
+          );
+        }
+      }
 
       return {
         ...message,
-        isGrouped: isGrouped || false,
+        isGrouped,
         showHeader: index === 0 || !prevMessage || !isGrouped,
       };
     });

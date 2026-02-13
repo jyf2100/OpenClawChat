@@ -1,25 +1,48 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Room, Gateway } from '../../types';
 import { useRoomStore } from '../../stores/roomStore';
+import { useSidebarStore } from '../../stores/sidebarStore';
 import { CreateRoomModal } from '../room/CreateRoomModal';
+import { CollaborationRoomForm } from '../room/CollaborationRoomForm';
+import { GatewayForm } from '../gateway/GatewayForm';
 import ContextMenu from '../chat/ContextMenu';
 
 interface SidebarProps {
   gateways: Gateway[];
   rooms: Room[];
-  activeGatewayId: string | null;
   activeRoomId: string | null;
   onRoomSelect: (roomId: string) => void;
+  request: (gatewayId: string, method: string, params: any) => Promise<any>;
+  getStatus: (gatewayId: string) => string;
+  connect: (url: string, token: string, gatewayId: string) => Promise<void>;
 }
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'connected':
+      return 'var(--success)';
+    case 'connecting':
+      return 'var(--warning)';
+    case 'error':
+      return 'var(--danger)';
+    default:
+      return 'var(--text-muted)';
+  }
+};
 
 export const Sidebar: React.FC<SidebarProps> = ({
   gateways,
   rooms,
-  activeGatewayId,
   activeRoomId,
   onRoomSelect,
+  request,
+  getStatus,
+  connect,
 }) => {
   const { addRoom, updateRoom, removeRoom } = useRoomStore();
+  const { toggleGateway, isGatewayExpanded } = useSidebarStore();
+  
   const [roomSearchQuery, setRoomSearchQuery] = useState('');
   const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -35,6 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     y: number;
     item: Room;
   }>({ visible: false, x: 0, y: 0, item: null as any });
+  
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
@@ -43,48 +67,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }>({ visible: false, x: 0, y: 0, text: '' });
 
   const [showCreateRoom, setShowCreateRoom] = useState(false);
-  // 预留创建房间相关功能
-  void showCreateRoom;
-  void setShowCreateRoom;
+  const [showGatewayForm, setShowGatewayForm] = useState(false);
+  const [editingGatewayId, setEditingGatewayId] = useState<string | null>(null);
+  const [showDeleteGatewayConfirm, setShowDeleteGatewayConfirm] = useState(false);
+  const [deletingGatewayId, setDeletingGatewayId] = useState<string | null>(null);
+  const [editingCollabRoom, setEditingCollabRoom] = useState<Room | null>(null);
 
-  const activeGateway = gateways.find(g => g.id === activeGatewayId);
+  const collaborationRooms = useMemo(() => {
+    return rooms.filter(room => room.roomType === 'collaboration');
+  }, [rooms]);
 
-  // 过滤并排序房间（置顶的在前）
-  const filteredRooms = useMemo(() => {
-    // 只有当有 activeGatewayId 时才显示房间
-    if (!activeGatewayId) return [];
-
-    let result = rooms.filter(room => {
-      // 核心逻辑：只显示当前网关的房间
-      // 旧逻辑兼容：如果 activeGatewayId 是 'default'，也显示 gatewayId='default' 的房间
-      if (room.gatewayId !== activeGatewayId) return false;
-      
-      if (roomSearchQuery) {
-        return room.name.toLowerCase().includes(roomSearchQuery.toLowerCase());
+  const gatewayRoomsMap = useMemo(() => {
+    const map: Record<string, Room[]> = {};
+    gateways.forEach(g => {
+      map[g.id] = [];
+    });
+    rooms.forEach(room => {
+      if (room.roomType === 'collaboration') return;
+      if (room.gatewayId && map[room.gatewayId]) {
+        map[room.gatewayId].push(room);
       }
-      return true;
     });
-
-    // 排序：置顶的在前，然后按 order 排序
-    result.sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      // 都置顶或都不置顶，按 order 排序
-      const aOrder = a.order ?? 0;
-      const bOrder = b.order ?? 0;
-      return aOrder - bOrder;
+    Object.keys(map).forEach(gatewayId => {
+      map[gatewayId].sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return (a.order ?? 0) - (b.order ?? 0);
+      });
     });
+    return map;
+  }, [gateways, rooms]);
 
-    return result;
-  }, [activeGateway, rooms, roomSearchQuery]);
+  const filteredCollaborationRooms = useMemo(() => {
+    if (!roomSearchQuery) return collaborationRooms;
+    return collaborationRooms.filter(room =>
+      room.name.toLowerCase().includes(roomSearchQuery.toLowerCase())
+    );
+  }, [collaborationRooms, roomSearchQuery]);
 
-  // 右键菜单处理
-  const handleContextMenu = (
-    e: React.MouseEvent,
-    item: Room
-  ) => {
+  const handleContextMenu = (e: React.MouseEvent, item: Room) => {
     e.preventDefault();
-    e.stopPropagation(); // 阻止事件冒泡
+    e.stopPropagation();
     setContextMenu({
       visible: true,
       x: e.clientX,
@@ -99,11 +122,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleContextAction = async (action: string) => {
     const { item } = contextMenu;
-
     switch (action) {
       case 'rename':
         setEditingRoomId(item.id);
         setEditingName(item.name);
+        break;
+      case 'editCollab':
+        setEditingCollabRoom(item);
         break;
       case 'delete':
         setDeleteConfirm({
@@ -114,21 +139,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         break;
       case 'markAsRead':
         await updateRoom(item.id, { unreadCount: 0 });
-        console.log('标记房间为已读:', item.id);
         break;
       case 'markAsUnread':
         await updateRoom(item.id, { unreadCount: 1 });
-        console.log('标记房间为未读:', item.id);
         break;
       case 'togglePin':
         await updateRoom(item.id, { pinned: !item.pinned });
-        console.log(item.pinned ? '取消置顶:' : '置顶:', item.id);
         break;
     }
     closeContextMenu();
   };
 
-  // 工具提示处理
   const showTooltip = (x: number, y: number, text: string) => {
     setTooltip({ visible: true, x, y, text });
     setTimeout(() => {
@@ -149,18 +170,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setShowCreateRoom(true);
   };
 
-  // 实际创建房间的处理函数
   const handleCreateRoomSubmit = async (roomData: Omit<Room, 'id' | 'unreadCount'> & { id?: string }) => {
-    if (!activeGatewayId) {
-      console.error('[Sidebar] 创建房间失败: 没有选中的网关');
+    const isCollaboration = roomData.roomType === 'collaboration';
+    const gatewayId = isCollaboration ? '' : (roomData.gatewayId || '');
+    
+    console.log('[Sidebar] 创建房间数据:', { roomData, isCollaboration, gatewayId });
+    
+    if (!isCollaboration && !gatewayId) {
+      console.error('[Sidebar] 创建房间失败: 没有指定网关');
       return;
     }
 
+    let roomId: string;
+    if (roomData.id) {
+      // 用户自定义 ID，需要加上网关前缀
+      roomId = isCollaboration ? roomData.id : `${gatewayId}:${roomData.id}`;
+    } else if (isCollaboration) {
+      roomId = `collab:${Date.now()}`;
+    } else {
+      // 默认使用 agent:main:main 作为 sessionKey
+      roomId = `${gatewayId}:agent:main:main`;
+    }
+
+    console.log('[Sidebar] 生成的房间 ID:', roomId);
+
     const newRoom: Room = {
       ...roomData,
-      id: roomData.id || `room:${Date.now()}`,
+      id: roomId,
+      gatewayId,
       unreadCount: 0,
-      gatewayId: activeGatewayId,
     };
     await addRoom(newRoom);
     console.log('[Sidebar] 已创建房间:', newRoom);
@@ -170,7 +208,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setShowCreateRoom(false);
   };
 
-  // 处理重命名提交
   const handleRenameSubmit = async () => {
     if (editingRoomId && editingName.trim()) {
       await updateRoom(editingRoomId, { name: editingName.trim() });
@@ -190,11 +227,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // 处理删除确认
   const handleDeleteConfirm = async () => {
     if (deleteConfirm.roomId) {
       await removeRoom(deleteConfirm.roomId);
-      console.log('删除房间:', deleteConfirm.roomId);
     }
     setDeleteConfirm({ show: false, roomId: null, roomName: '' });
   };
@@ -203,7 +238,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setDeleteConfirm({ show: false, roomId: null, roomName: '' });
   };
 
-  // 点击外部关闭菜单
+  const openEditGateway = (gatewayId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingGatewayId(gatewayId);
+    setShowGatewayForm(true);
+  };
+
+  const openAddGateway = () => {
+    setEditingGatewayId(null);
+    setShowGatewayForm(true);
+  };
+
+  const handleDeleteGateway = (gatewayId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeletingGatewayId(gatewayId);
+    setShowDeleteGatewayConfirm(true);
+  };
+
+  const confirmDeleteGateway = async () => {
+    if (deletingGatewayId) {
+      const { useGatewayStore } = await import('../../stores/gatewayStore');
+      await useGatewayStore.getState().removeGateway(deletingGatewayId);
+    }
+    setShowDeleteGatewayConfirm(false);
+    setDeletingGatewayId(null);
+  };
+
   useEffect(() => {
     const handleClickOutside = () => closeContextMenu();
     if (contextMenu.visible) {
@@ -212,126 +272,166 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [contextMenu.visible]);
 
-  return (
-    <div className="sidebar" style={{ height: '100%', position: 'relative', display: 'flex' }}>
-      {/* 房间列表 - 占满整个侧边栏 */}
-      <div
-        className="room-list"
-        style={{
-          width: '260px',
-          backgroundColor: 'var(--bg-secondary)',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <div className="room-header" style={{ padding: '0 20px', height: '60px' }}>
-          <span style={{ fontSize: '20px', fontWeight: 800, background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            RoClaw
-          </span>
-          <button 
-            className="icon-btn add-room-btn" 
-            onClick={openCreateRoomModal}
-            style={{ width: '32px', height: '32px', background: 'var(--bg-primary)', borderRadius: '50%', boxShadow: 'var(--shadow-sm)' }}
-          >
-            +
-          </button>
-        </div>
+  const renderGatewayRow = (gateway: Gateway) => {
+    const isExpanded = isGatewayExpanded(gateway.id);
+    const status = gateway.status || getStatus(gateway.id) || 'disconnected';
+    const gatewayRooms = gatewayRoomsMap[gateway.id] || [];
+    const filteredRooms = roomSearchQuery
+      ? gatewayRooms.filter(r => r.name.toLowerCase().includes(roomSearchQuery.toLowerCase()))
+      : gatewayRooms;
 
-        {/* 房间搜索 */}
-        <div className="search-input-wrapper" style={{ padding: '0 16px 12px' }}>
-          <div style={{ position: 'relative' }}>
-            <input
-              type="text"
-              className="search-input"
-              placeholder="搜索房间..."
-              value={roomSearchQuery}
-              onChange={(e) => setRoomSearchQuery(e.target.value)}
-              style={{ 
-                borderRadius: '20px', 
-                paddingLeft: '36px',
-                backgroundColor: 'var(--bg-primary)',
+    return (
+      <div key={gateway.id} className="gateway-section">
+        <div
+          className="gateway-row"
+          onClick={() => toggleGateway(gateway.id)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '8px 8px',
+            margin: '2px 0',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            transition: 'background-color 0.15s ease',
+            userSelect: 'none',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = 'var(--bg-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'transparent';
+          }}
+        >
+          <span
+            style={{
+              width: '16px',
+              fontSize: '10px',
+              color: 'var(--text-muted)',
+              transition: 'transform 0.2s ease',
+              display: 'inline-block',
+              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            }}
+          >
+            ▶
+          </span>
+          <span
+            style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: getStatusColor(status),
+              flexShrink: 0,
+              marginLeft: '4px',
+            }}
+          />
+          <span
+            style={{
+              flex: 1,
+              marginLeft: '8px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: 'var(--text-normal)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {gateway.name}
+          </span>
+          <div
+            style={{ display: 'flex', gap: '2px', opacity: 0.6 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={(e) => openEditGateway(gateway.id, e)}
+              title="编辑网关"
+              style={{
+                background: 'none',
                 border: 'none',
-                boxShadow: 'var(--shadow-sm)'
+                cursor: 'pointer',
+                padding: '4px',
+                fontSize: '12px',
+                color: 'var(--text-muted)',
               }}
-            />
-            <svg 
-              width="16" 
-              height="16" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="2" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
-              style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', opacity: 0.7 }}
             >
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
+              ⚙️
+            </button>
+            <button
+              onClick={(e) => handleDeleteGateway(gateway.id, e)}
+              title="删除网关"
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '4px',
+                fontSize: '12px',
+                color: 'var(--text-muted)',
+              }}
+            >
+              🗑️
+            </button>
           </div>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px' }}>
-          {filteredRooms.map((room, index) => (
-            <div
-              key={room.id}
-              className={`room-item ${activeRoomId === room.id ? 'active' : ''} ${index % 2 === 0 ? 'slide-in-right' : 'slide-in-left'}`}
-              onClick={() => onRoomSelect(room.id)}
-              onContextMenu={(e) => handleContextMenu(e, room)}
-              onMouseEnter={(e) => {
-                const members = room.members?.length || 0;
-                const pinStatus = room.pinned ? ' [置顶]' : '';
-                handleMouseEnter(e, `${room.name}${pinStatus}\n成员: ${members}\n未读: ${room.unreadCount}`);
-              }}
-              onMouseLeave={handleMouseLeave}
-              style={{
-                borderRadius: '12px',
-                padding: '10px 12px',
-                marginBottom: '4px'
-              }}
-            >
+        {isExpanded && (
+          <div className="gateway-rooms" style={{ marginLeft: '8px' }}>
+            {filteredRooms.map((room) => (
               <div
-                className="message-avatar"
+                key={room.id}
+                className={`room-item ${activeRoomId === room.id ? 'active' : ''}`}
+                onClick={() => onRoomSelect(room.id)}
+                onContextMenu={(e) => handleContextMenu(e, room)}
+                onMouseEnter={(e) => {
+                  const members = room.members?.length || 0;
+                  const pinStatus = room.pinned ? ' [置顶]' : '';
+                  handleMouseEnter(e, `${room.name}${pinStatus}\n成员: ${members}\n未读: ${room.unreadCount}`);
+                }}
+                onMouseLeave={handleMouseLeave}
                 style={{
-                  width: '40px',
-                  height: '40px',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  backgroundColor: `hsl(${room.id.length * 30 % 360}, 70%, 60%)`,
-                  position: 'relative',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                  borderRadius: '14px', // 稍微方一点的圆角
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  marginBottom: '2px',
+                  cursor: 'pointer',
+                  backgroundColor: activeRoomId === room.id ? 'var(--bg-primary)' : 'transparent',
+                  transition: 'background-color 0.1s ease',
                 }}
               >
-                {room.name.charAt(0).toUpperCase()}
-                {room.pinned && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: '-4px',
-                      right: '-4px',
-                      width: '16px',
-                      height: '16px',
-                      backgroundColor: 'white',
-                      borderRadius: '50%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                    }}
-                  >
-                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-gradient)' }} />
-                  </div>
-                )}
-              </div>
-              <div style={{ flex: 1, minWidth: 0, paddingLeft: '4px' }}>
                 <div
+                  className="message-avatar"
                   style={{
+                    width: '32px',
+                    height: '32px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    backgroundColor: `hsl(${room.id.length * 30 % 360}, 70%, 60%)`,
+                    borderRadius: '8px',
                     display: 'flex',
-                    justifyContent: 'space-between',
                     alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'white',
+                    flexShrink: 0,
+                    position: 'relative',
                   }}
                 >
+                  {room.name.charAt(0).toUpperCase()}
+                  {room.pinned && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '-2px',
+                        right: '-2px',
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        background: 'var(--accent)',
+                      }}
+                    />
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   {editingRoomId === room.id ? (
                     <input
                       autoFocus
@@ -347,74 +447,332 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         borderRadius: '4px',
                         border: '1px solid var(--accent)',
                         outline: 'none',
-                        fontSize: '14px',
+                        fontSize: '13px',
                         backgroundColor: 'var(--bg-primary)',
                         color: 'var(--text-normal)',
                       }}
                     />
                   ) : (
-                    <span
+                    <div
                       style={{
-                        fontSize: '15px',
-                        fontWeight: activeRoomId === room.id ? 600 : 500,
-                        color: activeRoomId === room.id ? 'var(--accent)' : 'var(--text-normal)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
                       }}
                     >
-                      {room.name}
-                    </span>
-                  )}
-                  {room.unreadCount > 0 && editingRoomId !== room.id && (
-                    <span className="unread-badge" style={{ boxShadow: '0 2px 5px rgba(250, 62, 62, 0.3)' }}>
-                        {room.unreadCount > 99 ? '99+' : room.unreadCount}
-                    </span>
+                      <span
+                        style={{
+                          fontSize: '13px',
+                          fontWeight: activeRoomId === room.id ? 600 : 500,
+                          color: activeRoomId === room.id ? 'var(--accent)' : 'var(--text-normal)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {room.name}
+                      </span>
+                      {room.unreadCount > 0 && (
+                        <span
+                          className="unread-badge"
+                          style={{
+                            minWidth: '18px',
+                            height: '18px',
+                            borderRadius: '9px',
+                            background: 'var(--danger)',
+                            color: 'white',
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '0 5px',
+                          }}
+                        >
+                          {room.unreadCount > 99 ? '99+' : room.unreadCount}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
-                {room.lastMessage && (
-                  <div
-                    style={{
-                      fontSize: '13px',
-                      color: 'var(--text-muted)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      marginTop: '2px',
-                      opacity: 0.8
-                    }}
-                  >
-                    {room.lastMessage && (
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                        {typeof room.lastMessage.content === 'string'
-                          ? room.lastMessage.content
-                          : (Array.isArray(room.lastMessage.content) && (room.lastMessage.content[0] as any)?.text) || '消息'}
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
+            ))}
+            {filteredRooms.length === 0 && (
+              <div
+                style={{
+                  padding: '12px',
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  fontSize: '12px',
+                }}
+              >
+                {roomSearchQuery ? '无匹配房间' : '暂无房间'}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderCollaborationRoom = (room: Room) => (
+    <div
+      key={room.id}
+      className={`room-item ${activeRoomId === room.id ? 'active' : ''}`}
+      onClick={() => onRoomSelect(room.id)}
+      onContextMenu={(e) => handleContextMenu(e, room)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '8px 12px',
+        borderRadius: '8px',
+        marginBottom: '2px',
+        cursor: 'pointer',
+        backgroundColor: activeRoomId === room.id ? 'var(--bg-primary)' : 'transparent',
+        borderLeft: '3px solid var(--accent)',
+        transition: 'background-color 0.1s ease',
+      }}
+    >
+      <div
+        className="message-avatar"
+        style={{
+          width: '32px',
+          height: '32px',
+          fontSize: '13px',
+          fontWeight: 600,
+          background: 'var(--accent-gradient)',
+          borderRadius: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'white',
+          flexShrink: 0,
+        }}
+      >
+        {room.name.charAt(0).toUpperCase()}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: '13px',
+            fontWeight: activeRoomId === room.id ? 600 : 500,
+            color: activeRoomId === room.id ? 'var(--accent)' : 'var(--text-normal)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {room.name}
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+          {room.collaboration?.participants?.length || 0} 个参与者
+        </div>
+      </div>
+      {room.unreadCount > 0 && (
+        <span
+          style={{
+            minWidth: '18px',
+            height: '18px',
+            borderRadius: '9px',
+            background: 'var(--danger)',
+            color: 'white',
+            fontSize: '10px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '0 5px',
+          }}
+        >
+          {room.unreadCount > 99 ? '99+' : room.unreadCount}
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="sidebar" style={{ height: '100%', position: 'relative', display: 'flex' }}>
+      <div
+        className="room-list"
+        style={{
+          width: '260px',
+          backgroundColor: 'var(--bg-secondary)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div className="room-header" style={{ padding: '0 16px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '18px', fontWeight: 800, background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            RoClaw
+          </span>
+          <button
+            className="icon-btn add-room-btn"
+            onClick={openCreateRoomModal}
+            title="创建房间"
+            style={{
+              width: '28px',
+              height: '28px',
+              background: 'var(--bg-primary)',
+              borderRadius: '6px',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '16px',
+              color: 'var(--text-normal)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            +
+          </button>
+        </div>
+
+        <div className="search-input-wrapper" style={{ padding: '0 12px 12px' }}>
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="搜索房间..."
+              value={roomSearchQuery}
+              onChange={(e) => setRoomSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                borderRadius: '6px',
+                paddingLeft: '32px',
+                paddingRight: '12px',
+                padding: '8px 12px 8px 32px',
+                backgroundColor: 'var(--bg-primary)',
+                border: 'none',
+                color: 'var(--text-normal)',
+                fontSize: '13px',
+              }}
+            />
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                position: 'absolute',
+                left: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-muted)',
+                opacity: 0.7,
+              }}
+            >
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px' }}>
+          <div style={{ marginBottom: '8px' }}>
+            <div
+              style={{
+                padding: '4px 8px',
+                fontSize: '11px',
+                fontWeight: 600,
+                color: 'var(--text-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}
+            >
+              网关
             </div>
-          ))}
-          {filteredRooms.length === 0 && roomSearchQuery && (
-            <div style={{
-              padding: '24px',
-              textAlign: 'center',
-              color: 'var(--text-muted)',
-              fontSize: '14px',
-            }}>
-              没有找到匹配的房间
+            {gateways.map(gateway => renderGatewayRow(gateway))}
+            <button
+              onClick={openAddGateway}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                fontSize: '12px',
+                borderRadius: '8px',
+                marginTop: '4px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--bg-primary)';
+                e.currentTarget.style.color = 'var(--success)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              <span style={{ fontSize: '14px' }}>+</span>
+              添加网关
+            </button>
+          </div>
+
+          {filteredCollaborationRooms.length > 0 && (
+            <div style={{ marginTop: '16px' }}>
+              <div
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}
+              >
+                协作房间
+              </div>
+              {filteredCollaborationRooms.map(room => renderCollaborationRoom(room))}
+            </div>
+          )}
+
+          {gateways.length === 0 && filteredCollaborationRooms.length === 0 && (
+            <div
+              style={{
+                padding: '24px',
+                textAlign: 'center',
+                color: 'var(--text-muted)',
+                fontSize: '13px',
+              }}
+            >
+              暂无网关，请添加一个网关开始使用
             </div>
           )}
         </div>
       </div>
 
-      {/* 右键菜单 */}
       {contextMenu.visible && contextMenu.item && (
         <ContextMenu
           position={{ x: contextMenu.x, y: contextMenu.y }}
           onClose={closeContextMenu}
           items={[
+            ...(contextMenu.item.roomType === 'collaboration' ? [
+              {
+                id: 'editCollab',
+                label: '编辑参与者',
+                icon: (
+                  <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                  </svg>
+                ),
+                onClick: () => handleContextAction('editCollab'),
+              },
+              {
+                id: 'divider-collab',
+                label: '',
+                type: 'divider' as const,
+                onClick: () => {},
+              },
+            ] : []),
             {
               id: 'rename',
               label: '重命名',
@@ -448,7 +806,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {
               id: 'divider-1',
               label: '',
-              type: 'divider',
+              type: 'divider' as const,
               onClick: () => {},
             },
             {
@@ -466,14 +824,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
       )}
 
-      {/* 创建房间模态框 */}
       <CreateRoomModal
         show={showCreateRoom}
         onClose={handleCancelCreateRoom}
         onCreate={handleCreateRoomSubmit}
+        request={request}
+        getStatus={getStatus}
+        connect={connect}
       />
 
-      {/* 工具提示 */}
       {tooltip.visible && (
         <div
           className="tooltip"
@@ -486,7 +845,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             color: 'white',
             padding: '4px 8px',
             borderRadius: '4px',
-            fontSize: '12px',
+            fontSize: '11px',
             whiteSpace: 'pre-wrap',
             zIndex: 9999,
             pointerEvents: 'none',
@@ -496,7 +855,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* 删除确认弹窗 */}
       {deleteConfirm.show && (
         <div
           style={{
@@ -517,27 +875,228 @@ export const Sidebar: React.FC<SidebarProps> = ({
             style={{
               backgroundColor: 'var(--bg-floating)',
               borderRadius: '8px',
-              padding: '24px',
-              minWidth: '320px',
-              maxWidth: '400px',
+              padding: '20px',
+              minWidth: '300px',
               border: '1px solid var(--border)',
-              boxShadow: '0 8px 16px rgba(0, 0, 0, 0.24)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 12px 0', color: 'var(--text-normal)', fontSize: '18px' }}>
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--text-normal)', fontSize: '16px' }}>
               删除房间
             </h3>
-            <p style={{ margin: '0 0 24px 0', color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5' }}>
-              确定要删除房间 <span style={{ fontWeight: 600, color: 'var(--text-normal)' }}>{deleteConfirm.roomName}</span> 吗？
-              <br />此操作无法撤销。
+            <p style={{ margin: '0 0 16px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
+              确定要删除房间 <strong>{deleteConfirm.roomName}</strong> 吗？
             </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button
                 onClick={handleDeleteCancel}
                 style={{
+                  padding: '6px 14px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-normal)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '4px',
+                  border: 'none',
+                  backgroundColor: 'var(--danger)',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGatewayForm && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+          onClick={() => {
+            setShowGatewayForm(false);
+            setEditingGatewayId(null);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--bg-floating)',
+              borderRadius: '8px',
+              padding: '24px',
+              minWidth: '400px',
+              maxWidth: '500px',
+              border: '1px solid var(--border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--text-normal)', fontSize: '18px' }}>
+              {editingGatewayId ? '编辑网关' : '添加网关'}
+            </h2>
+            <GatewayForm
+              gateway={gateways.find(g => g.id === editingGatewayId)}
+              onCancel={() => {
+                setShowGatewayForm(false);
+                setEditingGatewayId(null);
+              }}
+              onSave={() => {
+                setShowGatewayForm(false);
+                setEditingGatewayId(null);
+              }}
+            />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showDeleteGatewayConfirm && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+          onClick={() => {
+            setShowDeleteGatewayConfirm(false);
+            setDeletingGatewayId(null);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--bg-floating)',
+              borderRadius: '8px',
+              padding: '20px',
+              minWidth: '300px',
+              border: '1px solid var(--border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--text-normal)', fontSize: '16px' }}>
+              删除网关
+            </h3>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
+              确定要删除此网关吗？此操作无法撤销。
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowDeleteGatewayConfirm(false);
+                  setDeletingGatewayId(null);
+                }}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-normal)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmDeleteGateway}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '4px',
+                  border: 'none',
+                  backgroundColor: 'var(--danger)',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {editingCollabRoom && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+          onClick={() => setEditingCollabRoom(null)}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--bg-floating)',
+              borderRadius: '8px',
+              padding: '24px',
+              minWidth: '450px',
+              maxWidth: '550px',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              border: '1px solid var(--border)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--text-normal)', fontSize: '18px' }}>
+              编辑协作参与者
+            </h2>
+            <CollaborationRoomForm
+              participants={editingCollabRoom.collaboration?.participants || []}
+              onChange={(newParticipants) => {
+                const updatedRoom = {
+                  ...editingCollabRoom,
+                  collaboration: {
+                    ...editingCollabRoom.collaboration!,
+                    participants: newParticipants,
+                  },
+                };
+                setEditingCollabRoom(updatedRoom as Room);
+              }}
+              request={request}
+              getStatus={getStatus}
+              connect={connect}
+            />
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                onClick={() => setEditingCollabRoom(null)}
+                style={{
                   padding: '8px 16px',
-                  borderRadius: '6px',
+                  borderRadius: '4px',
                   border: '1px solid var(--border)',
                   backgroundColor: 'transparent',
                   color: 'var(--text-normal)',
@@ -548,23 +1107,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 取消
               </button>
               <button
-                onClick={handleDeleteConfirm}
+                onClick={async () => {
+                  if (editingCollabRoom) {
+                    await updateRoom(editingCollabRoom.id, {
+                      collaboration: editingCollabRoom.collaboration,
+                    });
+                    setEditingCollabRoom(null);
+                  }
+                }}
                 style={{
                   padding: '8px 16px',
-                  borderRadius: '6px',
+                  borderRadius: '4px',
                   border: 'none',
-                  backgroundColor: 'var(--danger)',
+                  backgroundColor: 'var(--accent)',
                   color: 'white',
                   cursor: 'pointer',
                   fontSize: '14px',
-                  fontWeight: 500,
                 }}
               >
-                删除
+                保存
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

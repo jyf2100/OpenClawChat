@@ -49,8 +49,10 @@ export interface Room {
   unreadCount: number;
   lastMessage?: Message;
   members?: string[];
-  pinned?: boolean; // 是否置顶
-  order?: number; // 排序序号
+  pinned?: boolean;
+  order?: number;
+  roomType?: RoomType;
+  collaboration?: CollaborationConfig;
 }
 
 // ==================== 聊天消息扩展类型 ====================
@@ -121,6 +123,7 @@ export interface ChatMessage {
   state?: 'pending' | 'sending' | 'sent' | 'error';
   attachments?: Attachment[];
   runId?: string;
+  collaborationContext?: CollaborationContext;
 }
 
 /**
@@ -136,6 +139,7 @@ export interface RenderedMessage {
   time: string;
   streaming: boolean;
   loading: boolean;
+  collaborationContext?: CollaborationContext;
 }
 
 /**
@@ -277,4 +281,97 @@ export interface ChatAbortParams {
 export interface PendingRequest {
   resolve: (value: any) => void;
   reject: (reason: any) => void;
+}
+
+// ==================== Agent API 类型 ====================
+
+/**
+ * Agent 身份信息
+ */
+export interface AgentIdentity {
+  name?: string;
+  theme?: string;
+  emoji?: string;
+  avatar?: string;
+  avatarUrl?: string;
+}
+
+/**
+ * Agent 列表项
+ */
+export interface GatewayAgentRow {
+  id: string;
+  name?: string;
+  identity?: AgentIdentity;
+}
+
+/**
+ * agents.list 响应
+ */
+export interface AgentsListResult {
+  defaultId: string;
+  mainKey: string;
+  scope: string;
+  agents: GatewayAgentRow[];
+}
+
+// ==================== 协作房间扩展类型 ====================
+
+/**
+ * 房间类型
+ */
+export type RoomType = 'single-gateway' | 'collaboration';
+
+/**
+ * 协作参与者
+ */
+export interface CollaborationParticipant {
+  gatewayId: string;
+  agentId: string;
+  order: number;
+  isActive: boolean;
+  name: string;
+  avatar?: string;
+  color?: string;
+}
+
+/**
+ * 协作配置
+ */
+export interface CollaborationConfig {
+  participants: CollaborationParticipant[];
+  autoContinue: boolean;
+  allowIntervention: boolean;
+}
+
+/**
+ * 协作状态
+ */
+export type CollaborationStatus = 'idle' | 'active' | 'paused' | 'completed';
+
+/**
+ * 协作会话
+ */
+export interface CollaborationSession {
+  sessionId: string;
+  roomId: string;
+  status: CollaborationStatus;
+  currentStep: number;
+  participants: CollaborationParticipant[];
+  userMessageId: string;
+  userMessage: string;
+  completedSteps: number[];
+  failedSteps: Record<number, string>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * 协作消息上下文
+ */
+export interface CollaborationContext {
+  sessionId: string;
+  step: number;
+  participantName: string;
+  participantColor?: string;
 }

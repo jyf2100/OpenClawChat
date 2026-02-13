@@ -1,8 +1,10 @@
 import React, { useMemo, useCallback } from 'react';
-import { ChatMessage, RenderedMessage, ContentBlock, Attachment } from '../../types';
+import { ChatMessage, RenderedMessage, ContentBlock, Attachment, Room } from '../../types';
 import { MessageList } from '../chat/MessageList';
 import { InputArea } from '../chat/InputArea';
+import { CollaborationStatusIndicator } from '../room/CollaborationStatusIndicator';
 import { formatRelativeTime } from '../../utils/timeFormat';
+import { useCollaborationStore } from '../../stores/collaborationStore';
 
 interface MainChatProps {
   messages: ChatMessage[];
@@ -10,6 +12,7 @@ interface MainChatProps {
   onSendMessage: (content: string, attachments?: Attachment[]) => void;
   onDeleteMessage?: (messageId: string) => void;
   onDeleteMessages?: (messageIds: string[]) => void;
+  room?: Room | null;
 }
 
 export const MainChat: React.FC<MainChatProps> = ({
@@ -18,9 +21,18 @@ export const MainChat: React.FC<MainChatProps> = ({
   onSendMessage,
   onDeleteMessage,
   onDeleteMessages,
+  room,
 }) => {
   const [isSelectionMode, setIsSelectionMode] = React.useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = React.useState<Set<string>>(new Set());
+  
+  const { getActiveSessionByRoom, cancelSession } = useCollaborationStore();
+  
+  const activeRoomId = room?.id || (messages[0]?.roomId);
+  
+  const activeSession = activeRoomId ? getActiveSessionByRoom(activeRoomId) : undefined;
+  
+  const participants = room?.collaboration?.participants || [];
 
   // 转换 ChatMessage 为 RenderedMessage - 只依赖 messages
   const renderedMessages: RenderedMessage[] = useMemo(() => {
@@ -52,6 +64,11 @@ export const MainChat: React.FC<MainChatProps> = ({
       // 确定头像字符
       const avatar = msg.role === 'user' ? '用户' : (msg.role === 'assistant' ? 'OpenClaw' : '工具');
 
+      // 调试：检查 collaborationContext
+      if (msg.collaborationContext) {
+        console.log('[MainChat] 消息 collaborationContext:', msg.id, msg.collaborationContext);
+      }
+
       return {
         id: msg.id,
         domId: `msg-${msg.id}`,
@@ -62,8 +79,8 @@ export const MainChat: React.FC<MainChatProps> = ({
         time: formatRelativeTime(msg.timestamp),
         streaming: msg.isStreaming || false,
         loading: msg.state === 'sending',
-        // 选中状态将在后续处理
         isSelected: false,
+        collaborationContext: msg.collaborationContext,
       };
     });
   }, [messages]);
@@ -133,6 +150,14 @@ export const MainChat: React.FC<MainChatProps> = ({
 
   return (
     <div className="main-chat" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
+      {activeRoomId && (
+        <CollaborationStatusIndicator 
+          roomId={activeRoomId}
+          onCancel={activeSession ? (sessionId) => {
+            cancelSession(sessionId);
+          } : undefined}
+        />
+      )}
       <MessageList
         messages={messagesWithSelection}
         loading={false}
@@ -191,6 +216,7 @@ export const MainChat: React.FC<MainChatProps> = ({
         <InputArea
           isConnected={isConnected}
           onSend={handleSend}
+          participants={participants}
           // TODO: 从 App 传递 isBusy, isSending 状态
         />
       )}

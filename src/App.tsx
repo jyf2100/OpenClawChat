@@ -3,30 +3,30 @@ import { Sidebar, Header, MainChat } from './components/layout';
 import { ToastComponent, useToast } from './components/ui';
 import { useGatewayStore } from './stores/gatewayStore';
 import { useRoomStore } from './stores/roomStore';
+import { useCollaborationQueueStore } from './stores/collaborationQueueStore';
+import { useCollaborationStore } from './stores/collaborationStore';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useGlobalKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useCollaboration, parseMentions, filterParticipantsByMentions } from './hooks/useCollaboration';
 import { ChatMessage } from './types';
 import './styles/globals.css';
 
 function App() {
-  // Gateway Store
-  const { gateways, activeGatewayId, setActiveGateway, init: initGatewayStore } = useGatewayStore();
+  const { gateways, init: initGatewayStore } = useGatewayStore();
+  const { clearAllActiveSessions } = useCollaborationStore();
 
-  // Toast 用于显示错误信息
   const { error: showError } = useToast();
 
-  // Initialize global keyboard shortcuts
   useGlobalKeyboardShortcuts();
 
-  // Room Store
   const { rooms, activeRoomId, setActiveRoom, addMessage, updateMessage, deleteMessage, deleteMessages, getMessages, initDefaultRoom, init: initRoomStore } = useRoomStore();
+  
+  const { enqueue, getQueueLength } = useCollaborationQueueStore();
 
-  // 用于存储流式消息的临时状态
   const streamingMessageRef = useRef<Record<string, ChatMessage>>({});
   const storageInitializedRef = useRef(false);
-  const lastAutoConnectKeyRef = useRef<string | null>(null);
+  const connectedGatewaysRef = useRef<Set<string>>(new Set());
 
-  // 初始化存储（只运行一次）
   useEffect(() => {
     if (storageInitializedRef.current) return;
 
@@ -36,20 +36,22 @@ function App() {
           initGatewayStore(),
           initRoomStore(),
         ]);
+        
+        // 清理所有活跃的协作会话（页面刷新后协作进程不会恢复）
+        clearAllActiveSessions();
+        
         console.log('[App] 存储初始化完成');
         storageInitializedRef.current = true;
       } catch (error) {
         console.error('[App] 存储初始化失败:', error);
-        storageInitializedRef.current = true; // 即使失败也标记为已尝试
+        storageInitializedRef.current = true;
       }
     };
     initStores();
-  }, []); // 空依赖数组，确保只运行一次
+  }, []);
 
-  // WebSocket Hook - 添加 chat 事件处理（多连接版本）
-  const { getStatus, connect, request, getError, isConnected } = useWebSocket({
+  const { getStatus, connect, request, getError } = useWebSocket({
     onChatEvent: (payload, gatewayId) => {
-      // 调试：打印完整的 payload 结构
       console.log('[App] ========== Chat Event Payload ==========');
       console.log('[App] 完整 payload:', JSON.stringify(payload, null, 2));
       console.log('[App] payload 所有键:', Object.keys(payload));
@@ -62,19 +64,45 @@ function App() {
       console.log('[App] 收到 chat 事件:', payload);
       console.log('[App] 事件状态:', payload.state);
 
-      // 解析 Room ID
-      // 根据消息的 sessionKey 和 gatewayId 构造房间 ID，确保消息显示在正确的房间
       const protocolSessionKey = payload.sessionKey || '';
       const runId = payload.runId || '';
 
       let roomId = '';
+      let collabInfo: { roomId: string; sessionId: string; step: number; participantName: string; participantColor: string } | undefined;
 
-      // 从 WebSocket 连接的 gatewayId 和 sessionKey 构造房间 ID
+      // 检查是否是协作步骤的响应
       if (protocolSessionKey && gatewayId) {
+        const stepKeyMap = useCollaborationStore.getState().stepKeyMap;
+        const prefix = `${gatewayId}:${protocolSessionKey}:`;
+        
+        console.log('[App] 检查协作步骤');
+        console.log('[App]   gatewayId:', gatewayId);
+        console.log('[App]   protocolSessionKey:', protocolSessionKey);
+        console.log('[App]   prefix:', prefix);
+        console.log('[App]   stepKeyMap keys:', Object.keys(stepKeyMap));
+        console.log('[App]   stepKeyMap values:', stepKeyMap);
+        
+        for (const [key, info] of Object.entries(stepKeyMap)) {
+          if (key.startsWith(prefix)) {
+            collabInfo = info;
+            roomId = info.roomId;
+            console.log('[App] 协作步骤响应匹配成功');
+            console.log('[App]   stepKey:', key);
+            console.log('[App]   participantName:', info.participantName);
+            break;
+          }
+        }
+        
+        if (!collabInfo) {
+          console.log('[App] 未找到匹配的协作步骤');
+        }
+      }
+
+      // 如果不是协作步骤，按普通消息处理
+      if (!roomId && protocolSessionKey && gatewayId) {
         roomId = `${gatewayId}:${protocolSessionKey}`;
         console.log('[App] 使用 gatewayId + sessionKey 构造房间 ID:', roomId);
-      } else if (protocolSessionKey) {
-        // 回退：尝试从 runId 提取网关 ID
+      } else if (!roomId && protocolSessionKey) {
         let currentGatewayId: string | undefined;
         if (runId) {
           const runIdParts = runId.split('-');
@@ -101,16 +129,10 @@ function App() {
         return;
       }
 
-      // 处理不同状态的消息
       if (payload.state === 'delta' && payload.message) {
-        // 流式更新 - payload.message 是 ChatMessage 对象
         console.log('[App] 流式消息更新:', payload.message);
 
-        // 获取或创建流式消息
         let streamingMsg = streamingMessageRef.current[runId];
-        
-        // 如果没有 runId，我们尝试使用一个临时的 ID，或者直接追加到最新的一条 assistant 消息
-        // 但为了安全起见，如果真的没有 runId，我们最好是忽略或者生成一个临时的
         const safeRunId = runId || `temp-run-${Date.now()}`;
 
         if (!streamingMsg) {
@@ -120,11 +142,17 @@ function App() {
             content: [{ type: 'text', text: '' }],
             timestamp: Date.now(),
             isStreaming: true,
+            collaborationContext: collabInfo ? {
+              sessionId: collabInfo.sessionId,
+              step: collabInfo.step,
+              participantName: collabInfo.participantName,
+              participantColor: collabInfo.participantColor,
+            } : undefined,
           };
           streamingMessageRef.current[safeRunId] = streamingMsg;
+          console.log('[App] 创建新流式消息:', safeRunId, 'collaborationContext:', streamingMsg.collaborationContext);
         }
 
-        // 提取增量内容
         const msgContent = payload.message as any;
         let deltaText = '';
 
@@ -136,33 +164,26 @@ function App() {
                 deltaText = textBlock.text;
             }
         }
-        // 兼容某些后端可能直接把 content 放在 message 顶层的情况
         else if (typeof msgContent === 'string') {
             deltaText = msgContent;
         }
 
         if (deltaText) {
-            // 获取当前文本块 - 加固空值检查
             const contentArray = streamingMsg.content as any[];
             if (contentArray && contentArray.length > 0) {
               const currentBlock = contentArray[0];
-              // 简单追加模式
               currentBlock.text = (currentBlock.text || '') + deltaText;
-              
-              // 使用 updateMessage 更新 UI
               updateMessage(roomId, safeRunId, { ...streamingMsg } as any);
             }
         }
 
       } else if (payload.state === 'final') {
-        // 最终消息 - payload.message 是 ChatMessage 对象
         console.log('[App] 最终消息:', payload.message || '(空内容)');
 
         const msgContent = payload.message as any;
         let text = '';
 
         if (msgContent) {
-            // 提取文本内容
             if (typeof msgContent === 'string') {
               text = msgContent;
             } else if (msgContent.content && Array.isArray(msgContent.content)) {
@@ -173,200 +194,153 @@ function App() {
             }
         }
 
-        // 检查是否存在正在进行的流式消息
         let streamingMsg = streamingMessageRef.current[runId];
         
         if (streamingMsg) {
-            // 如果存在流式消息，结束它
             streamingMsg.isStreaming = false;
-            
-            // 如果 final 包有内容，追加或覆盖（这里选择如果 final 有文本则覆盖，否则保留流式积累的文本）
             if (text) {
                 streamingMsg.content = [{ type: 'text', text }];
             }
-            
-            // 更新状态
             updateMessage(roomId, streamingMsg.id, { ...streamingMsg } as any);
             console.log('[App] 结束流式消息:', streamingMsg.id);
         } else {
-            // 如果没有流式消息，创建一个新消息
             const assistantMessage: ChatMessage = {
               id: runId || Date.now().toString(),
               role: 'assistant',
-              content: [{ type: 'text', text: text || '...' }], // 如果没内容，显示省略号
+              content: [{ type: 'text', text: text || '...' }],
               timestamp: Date.now(),
               isStreaming: false,
+              collaborationContext: collabInfo ? {
+                sessionId: collabInfo.sessionId,
+                step: collabInfo.step,
+                participantName: collabInfo.participantName,
+                participantColor: collabInfo.participantColor,
+              } : undefined,
             };
-
-            // 更新现有消息（如果存在）或添加新消息
             updateMessage(roomId, assistantMessage.id, assistantMessage as any);
             console.log('[App] 添加助手消息:', assistantMessage);
         }
 
-        // 清理流式消息缓存
+        if (streamingMsg?.collaborationContext || collabInfo) {
+          const sessionId = streamingMsg?.collaborationContext?.sessionId || collabInfo?.sessionId;
+          const step = streamingMsg?.collaborationContext?.step ?? collabInfo?.step;
+          
+          if (sessionId !== undefined && step !== undefined) {
+            console.log('[App] 协作步骤完成:', sessionId, step);
+            
+            // 清理 stepKeyMap（使用完整格式）
+            if (protocolSessionKey && gatewayId && sessionId && step !== undefined) {
+              const stepKey = `${gatewayId}:${protocolSessionKey}:${sessionId}:${step}`;
+              useCollaborationStore.getState().clearStepKey(stepKey);
+              console.log('[App] 已清理 stepKey:', stepKey);
+            }
+            
+            setTimeout(() => {
+              onStepComplete(sessionId, step);
+            }, 300);
+          }
+        }
+
         if (runId) {
             delete streamingMessageRef.current[runId];
         }
 
       } else if (payload.state === 'aborted') {
         console.warn('[App] Chat 事件被中止:', payload);
-        // 清理流式消息缓存
         delete streamingMessageRef.current[runId];
       } else if (payload.state === 'error') {
         console.error('[App] Chat 事件错误:', payload);
-        // 清理流式消息缓存
         delete streamingMessageRef.current[runId];
       }
     },
   });
 
-  // 当网关变化时，初始化默认房间，并切换到该网关的默认房间
+  const {
+    startCollaboration,
+    isCollaborationActive,
+    onStepComplete,
+  } = useCollaboration({
+    request,
+    getStatus,
+    connect,
+    showToast: showError,
+  });
+
+  // 为每个网关初始化默认房间
   useEffect(() => {
-    if (activeGatewayId) {
-      console.log('[App] 检查网关默认房间:', activeGatewayId);
-      initDefaultRoom(activeGatewayId);
+    gateways.forEach(gateway => {
+      initDefaultRoom(gateway.id);
+    });
+  }, [gateways, initDefaultRoom]);
 
-      // 延迟执行房间切换，确保 initDefaultRoom 完成且 rooms 状态已更新
-      const timer = setTimeout(() => {
-        // 从当前房间 ID 中提取网关 ID
-        let currentRoomGatewayId = 'default';
-        if (activeRoomId) {
-          const roomParts = activeRoomId.split(':');
-          if (roomParts.length >= 3) {
-            currentRoomGatewayId = roomParts[0];
-          }
-        }
-
-        console.log('[App] 当前房间 ID:', activeRoomId, '提取的网关 ID:', currentRoomGatewayId, '激活网关 ID:', activeGatewayId);
-
-        // 检查是否需要切换房间
-        if (currentRoomGatewayId !== activeGatewayId) {
-          // 需要切换房间
-          const gatewayRooms = useRoomStore.getState().rooms.filter(r => r.id.startsWith(`${activeGatewayId}:`));
-          if (gatewayRooms.length > 0) {
-            // 优先选择默认房间
-            const defaultRoom = gatewayRooms.find(r => r.id.includes('agent:main:main'));
-            const targetRoom = defaultRoom || gatewayRooms[0];
-            console.log('[App] 切换网关，自动选择房间:', targetRoom.id, '当前房间:', activeRoomId);
-            setActiveRoom(targetRoom.id);
-          } else {
-            // 如果该网关下没有房间，initDefaultRoom 应该会创建一个
-            // 再次检查
-            const allRooms = useRoomStore.getState().rooms;
-            const newGatewayRooms = allRooms.filter(r => r.id.startsWith(`${activeGatewayId}:`));
-            if (newGatewayRooms.length > 0) {
-              const targetRoom = newGatewayRooms[0];
-              console.log('[App] 切换网关，使用新创建的房间:', targetRoom.id);
-              setActiveRoom(targetRoom.id);
-            }
-          }
-        } else {
-          console.log('[App] 当前房间已属于当前网关，无需切换:', activeRoomId);
-        }
-      }, 100); // 给 initDefaultRoom 一点时间完成
-
-      return () => clearTimeout(timer);
-    }
-  }, [activeGatewayId, initDefaultRoom, activeRoomId, setActiveRoom]);
-
-  // 如果存在网关但未选择当前网关，默认选中第一个网关
+  // 自动连接所有网关
   useEffect(() => {
-    if (!activeGatewayId && gateways.length > 0) {
-      void setActiveGateway(gateways[0].id);
-    }
-  }, [activeGatewayId, gateways, setActiveGateway]);
-
-  // 当房间更新时，如果没有选中的房间，自动选择当前网关下的第一个
-  useEffect(() => {
-    if (activeGatewayId && rooms.length > 0 && !activeRoomId) {
-      const gatewayRooms = rooms.filter(r => r.gatewayId === activeGatewayId);
-      if (gatewayRooms.length > 0) {
-        const firstRoom = gatewayRooms[0];
-        console.log('[App] 自动选择当前网关下的第一个房间:', firstRoom);
-        setActiveRoom(firstRoom.id);
-      } else {
-        const fallbackRooms = rooms.filter(r => r.gatewayId === 'default');
-        const fallbackRoom = fallbackRooms[0] || rooms[0];
-        if (fallbackRoom) {
-          console.log('[App] 自动选择回退房间:', fallbackRoom);
-          setActiveRoom(fallbackRoom.id);
-        }
+    gateways.forEach(gateway => {
+      if (gateway.autoConnect === false) return;
+      
+      const currentStatus = getStatus(gateway.id);
+      // 已连接或正在连接，跳过
+      if (currentStatus === 'connected' || currentStatus === 'connecting') {
+        return;
       }
-    }
-  }, [rooms, activeRoomId, activeGatewayId, setActiveRoom]);
 
-  // 自动连接到当前选中的网关（autoConnect !== false）
+      if (!gateway.token) {
+        return;
+      }
+
+      // 检查是否最近尝试过连接（避免重复连接）
+      const connectKey = `${gateway.id}:${gateway.url}:${gateway.token}`;
+      if (connectedGatewaysRef.current.has(connectKey)) {
+        return;
+      }
+      connectedGatewaysRef.current.add(connectKey);
+
+      console.log('[App] 自动连接网关:', gateway.id, gateway.url);
+      connect(gateway.url, gateway.token, gateway.id);
+    });
+  }, [gateways, getStatus, connect]);
+
+  // 同步所有网关的 WebSocket 状态
   useEffect(() => {
-    if (!activeGatewayId) return;
-
-    const gateway = gateways.find(g => g.id === activeGatewayId);
-    if (!gateway) return;
-    if (gateway.autoConnect === false) return;
-
-    const autoConnectKey = `${gateway.id}:${gateway.url}:${gateway.token || ''}`;
-    const gatewayStatus = getStatus(activeGatewayId);
-    if (gatewayStatus !== 'disconnected' && gatewayStatus !== 'error') {
-      lastAutoConnectKeyRef.current = autoConnectKey;
-      return;
-    }
-
-    if (lastAutoConnectKeyRef.current === autoConnectKey) return;
-    lastAutoConnectKeyRef.current = autoConnectKey;
-
-    if (!gateway.token) {
-      showError('未设置网关认证令牌，无法自动连接。请在右上角网关设置中填写令牌。', '无法自动连接', 6000);
-      return;
-    }
-
-    // 调试日志：查看传递给 connect 的参数
-    console.log('[App] ========== 准备连接网关 ==========');
-    console.log('[App] gateway.url:', gateway.url);
-    console.log('[App] gateway.token:', gateway.token);
-    console.log('[App] gateway.token 长度:', gateway.token?.length);
-    console.log('[App] gateway.token 前10位:', gateway.token?.substring(0, 10));
-    console.log('[App] ======================================');
-
-    connect(gateway.url, gateway.token, activeGatewayId);
-  }, [activeGatewayId, gateways, getStatus, connect, showError]);
-
-  // 同步 WebSocket 状态到 Gateway Store
-  useEffect(() => {
-    if (activeGatewayId) {
-      const gatewayStatus = getStatus(activeGatewayId);
-      useGatewayStore.getState().updateGateway(activeGatewayId, { status: gatewayStatus as any });
-    }
-  }, [activeGatewayId, getStatus]);
+    gateways.forEach(gateway => {
+      const gatewayStatus = getStatus(gateway.id);
+      const currentStatus = useGatewayStore.getState().gateways.find(g => g.id === gateway.id)?.status;
+      if (gatewayStatus !== currentStatus) {
+        useGatewayStore.getState().updateGateway(gateway.id, { status: gatewayStatus as any });
+      }
+    });
+  }, [gateways, getStatus]);
 
   // 显示 WebSocket 连接错误
   useEffect(() => {
-    if (activeGatewayId) {
-      const wsError = getError(activeGatewayId);
+    gateways.forEach(gateway => {
+      const wsError = getError(gateway.id);
       if (wsError) {
-        console.error('[App] WebSocket 错误:', wsError);
-
-        // 根据错误类型提供更友好的提示
+        console.error('[App] WebSocket 错误:', gateway.id, wsError);
         if (wsError.includes('unauthorized') || wsError.includes('token')) {
           showError(
-            '网关认证失败：令牌不匹配或无效。请检查网关设置中的认证令牌是否正确。',
+            `网关 ${gateway.name} 认证失败：令牌不匹配或无效。`,
             '连接失败',
             6000
           );
         } else if (wsError.includes('timeout') || wsError.includes('超时')) {
           showError(
-            '连接网关超时。请检查网络连接和网关地址是否正确。',
+            `连接网关 ${gateway.name} 超时。`,
             '连接超时',
             5000
           );
         } else {
           showError(
-            `网关连接失败：${wsError}`,
+            `网关 ${gateway.name} 连接失败：${wsError}`,
             '连接错误',
             5000
           );
         }
+        // 清除错误以避免重复提示
+        useGatewayStore.getState().updateGateway(gateway.id, { status: 'error' } as any);
       }
-    }
-  }, [activeGatewayId, getError, showError]);
+    });
+  }, [gateways, getError, showError]);
 
   const handleSendMessage = async (content: string) => {
     console.log('[App] 准备发送消息:', content);
@@ -377,7 +351,44 @@ function App() {
       return;
     }
 
-    // 从房间 ID 中提取网关 ID
+    const room = rooms.find(r => r.id === activeRoomId);
+    
+    if (room?.roomType === 'collaboration' && room.collaboration) {
+      console.log('[App] 协作房间消息');
+      
+      if (isCollaborationActive(activeRoomId)) {
+        enqueue(activeRoomId, content);
+        const pendingCount = getQueueLength(activeRoomId);
+        showError(
+          `当前协作进行中，消息已加入队列（还有 ${pendingCount} 条）`,
+          '已加入队列',
+          3000
+        );
+        return;
+      }
+      
+      const mentions = parseMentions(content);
+      const targetParticipants = mentions.length > 0
+        ? filterParticipantsByMentions(room.collaboration.participants, mentions)
+        : room.collaboration.participants;
+      
+      if (targetParticipants.length === 0) {
+        showError('未找到匹配的参与者，请检查@提及名称', '提示', 3000);
+        return;
+      }
+      
+      const sessionId = await startCollaboration(
+        activeRoomId,
+        content,
+        targetParticipants
+      );
+      
+      if (sessionId) {
+        console.log('[App] 协作会话已启动:', sessionId);
+      }
+      return;
+    }
+
     const roomParts = activeRoomId.split(':');
     let roomGatewayId: string | undefined;
 
@@ -388,7 +399,6 @@ function App() {
       return;
     }
 
-    // 检查目标网关是否已连接
     const gatewayStatus = getStatus(roomGatewayId);
     console.log('[App] 目标网关:', roomGatewayId, '状态:', gatewayStatus);
 
@@ -397,11 +407,10 @@ function App() {
       const targetGateway = gateways.find(g => g.id === roomGatewayId);
       if (!targetGateway || !targetGateway.token) {
         console.error('[App] 找不到目标网关配置或未设置 token');
+        showError('网关未连接或未配置 Token', '无法发送消息', 4000);
         return;
       }
-      // 尝试连接
       await connect(targetGateway.url, targetGateway.token, roomGatewayId);
-      // 等待连接建立
       await new Promise<void>((resolve) => {
         const check = () => {
           if (getStatus(roomGatewayId!) === 'connected') {
@@ -414,13 +423,9 @@ function App() {
       });
     }
 
-    // 生成唯一的消息 ID 和 idempotencyKey
     const messageId = Date.now().toString();
     const idempotencyKey = `${activeRoomId}-${messageId}`;
 
-    console.log('[App] 生成消息 ID:', messageId, 'idempotencyKey:', idempotencyKey);
-
-    // 添加用户消息到本地状态
     const userMessage: ChatMessage = {
       id: messageId,
       role: 'user',
@@ -431,17 +436,9 @@ function App() {
     await addMessage(activeRoomId, userMessage as any);
     console.log('[App] 用户消息已添加到本地状态:', userMessage);
 
-    // 获取用于通信的 sessionKey (剥离网关前缀)
-    console.log('[App] ========== 发送消息开始 ==========');
-    console.log('[App] 消息内容:', content);
-    console.log('[App] 当前房间 ID:', activeRoomId);
-    console.log('[App] 房间所属网关 ID:', roomGatewayId);
-
-    // 构造协议 sessionKey（去掉网关前缀）
     const protocolSessionKey = roomParts.slice(1).join(':');
     console.log('[App] 协议 Session Key:', protocolSessionKey);
 
-    // 通过 WebSocket 发送消息
     try {
       const response = await request(roomGatewayId, 'chat.send', {
         sessionKey: protocolSessionKey,
@@ -452,7 +449,6 @@ function App() {
       console.log('[App] WebSocket 响应:', response);
     } catch (error) {
       console.error('[App] 发送消息失败:', error);
-      // 更新消息状态为错误
       await addMessage(activeRoomId, {
         ...userMessage,
         id: messageId + '-error',
@@ -463,7 +459,6 @@ function App() {
 
   const handleDeleteMessage = async (messageId: string) => {
     if (activeRoomId) {
-      // 临时移除 confirm，因为它在 Tauri 环境中可能不稳定
       console.log('[App] 删除消息:', messageId);
       await deleteMessage(activeRoomId, messageId);
     }
@@ -478,123 +473,99 @@ function App() {
     }
   };
 
-  // 处理房间选择，同时切换到对应的网关
   const handleRoomSelect = async (roomId: string) => {
-    console.log('[App] ========== 选择房间 开始 ==========');
-    console.log('[App] 房间 ID:', roomId);
+    console.log('[App] 选择房间:', roomId);
 
-    // 从房间 ID 中提取网关 ID
-    const roomParts = roomId.split(':');
-    let roomGatewayId = 'default';
+    const room = rooms.find(r => r.id === roomId);
 
-    if (roomParts.length >= 3) {
-      roomGatewayId = roomParts[0];
-    }
-
-    console.log('[App] 从房间 ID 提取的网关 ID:', roomGatewayId);
-
-    // 获取当前状态
-    const currentActiveGatewayId = useGatewayStore.getState().activeGatewayId;
-    const isGatewayConnected = isConnected(roomGatewayId);
-    const gatewayStatus = getStatus(roomGatewayId);
-
-    console.log('[App] 当前状态:');
-    console.log('[App]  - activeGatewayId (store):', currentActiveGatewayId);
-    console.log('[App]  - 房间所属网关连接状态:', gatewayStatus);
-    console.log('[App]  - 房间所属网关是否已连接:', isGatewayConnected);
-
-    // 检查是否需要切换激活网关（UI状态）
-    if (roomGatewayId !== currentActiveGatewayId) {
-      console.log('[App] 房间网关 ≠ 激活网关，需要切换 UI 状态');
-      // 切换到房间所属的网关（仅 UI 状态，不影响连接）
-      await setActiveGateway(roomGatewayId);
-      console.log('[App] 切换后 activeGatewayId:', useGatewayStore.getState().activeGatewayId);
-    } else {
-      console.log('[App] 房间网关 = 激活网关');
-    }
-
-    // 检查是否需要连接 WebSocket（如果还没连接）
-    if (!isGatewayConnected) {
-      console.log('[App] WebSocket 未连接到目标网关，需要连接:', roomGatewayId);
-
-      // 连接到目标网关
-      const gateway = gateways.find(g => g.id === roomGatewayId);
-      if (gateway) {
-        console.log('[App] 找到网关配置:', { id: gateway.id, url: gateway.url, hasToken: !!gateway.token });
-        if (gateway.token) {
-          console.log('[App] 调用 connect() 连接到网关:', gateway.id, gateway.url);
-          connect(gateway.url, gateway.token, roomGatewayId);
-          console.log('[App] connect() 已调用，等待连接建立...');
-        } else {
-          console.error('[App] 网关没有设置 token!');
+    if (room?.roomType === 'collaboration') {
+      // 协作房间：连接所有参与者的网关
+      const participants = room.collaboration?.participants || [];
+      for (const participant of participants) {
+        const gatewayStatus = getStatus(participant.gatewayId);
+        if (gatewayStatus !== 'connected') {
+          const gateway = gateways.find(g => g.id === participant.gatewayId);
+          if (gateway && gateway.token) {
+            console.log('[App] 协作房间 - 连接网关:', gateway.id);
+            connect(gateway.url, gateway.token, participant.gatewayId);
+          }
         }
-      } else {
-        console.error('[App] 找不到网关配置:', roomGatewayId);
       }
     } else {
-      console.log('[App] WebSocket 已连接到目标网关，无需重新连接');
+      // 普通房间：连接单个网关
+      const roomParts = roomId.split(':');
+      let roomGatewayId = 'default';
+
+      if (roomParts.length >= 3) {
+        roomGatewayId = roomParts[0];
+      }
+
+      const gatewayStatus = getStatus(roomGatewayId);
+      if (gatewayStatus !== 'connected') {
+        const gateway = gateways.find(g => g.id === roomGatewayId);
+        if (gateway && gateway.token) {
+          console.log('[App] 连接网关:', gateway.id);
+          connect(gateway.url, gateway.token, roomGatewayId);
+        }
+      }
     }
 
-    // 设置活跃房间
-    console.log('[App] 设置活跃房间:', roomId);
     setActiveRoom(roomId);
-    console.log('[App] ========== 选择房间完成 ==========');
   };
 
   const activeRoom = rooms.find(r => r.id === activeRoomId) || null;
   const currentMessages = activeRoomId ? getMessages(activeRoomId) : [];
 
-  // 调试日志 - 必须在变量声明后
-  useEffect(() => {
-    if (activeGatewayId) {
-      const gatewayStatus = getStatus(activeGatewayId);
-      const gatewayError = getError(activeGatewayId);
-      console.log('[App] 当前激活网关:', activeGatewayId);
-      console.log('[App] 网关连接状态:', gatewayStatus);
-      if (gatewayError) {
-        console.error('[App] WebSocket 错误:', gatewayError);
-      }
+  // 获取当前房间的连接状态
+  const getConnectionStatus = () => {
+    if (!activeRoomId) return 'disconnected';
+    
+    const room = rooms.find(r => r.id === activeRoomId);
+    if (room?.roomType === 'collaboration') {
+      // 协作房间：检查所有参与者的网关状态
+      const participantGateways = room.collaboration?.participants || [];
+      const allConnected = participantGateways.every(p => getStatus(p.gatewayId) === 'connected');
+      return allConnected ? 'connected' : 'connecting';
     }
-    console.log('[App] 当前房间 ID:', activeRoomId);
-    console.log('[App] 房间列表:', rooms);
-    console.log('[App] 当前消息数量:', currentMessages.length);
-  }, [activeGatewayId, getStatus, getError, activeRoomId, rooms, currentMessages.length]);
+    
+    // 普通房间：检查该房间所属网关的状态
+    const roomParts = activeRoomId.split(':');
+    if (roomParts.length >= 3) {
+      return getStatus(roomParts[0]);
+    }
+    return 'disconnected';
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Toast 通知 */}
       <ToastComponent />
 
-      {/* 顶部 Header */}
       <Header
         room={activeRoom}
-        connectionStatus={activeGatewayId ? getStatus(activeGatewayId) : 'disconnected'}
-        gateways={gateways}
-        activeGatewayId={activeGatewayId}
+        connectionStatus={getConnectionStatus()}
         currentUser={{ name: '用户' }}
         onSettingsClick={() => console.log('打开设置')}
         onNotificationsClick={() => console.log('打开通知中心')}
-        onGatewaySelect={setActiveGateway}
       />
 
-      {/* 主内容区域 */}
       <div className="flex flex-1 overflow-hidden" style={{ display: 'flex', flexDirection: 'row' }}>
-        {/* 侧边栏 */}
         <Sidebar
           gateways={gateways}
           rooms={rooms}
-          activeGatewayId={activeGatewayId}
           activeRoomId={activeRoomId}
           onRoomSelect={handleRoomSelect}
+          request={request}
+          getStatus={getStatus}
+          connect={connect}
         />
 
-        {/* 主聊天区域 */}
         <MainChat
           messages={currentMessages as any}
-          isConnected={activeGatewayId ? isConnected(activeGatewayId) : false}
+          isConnected={getConnectionStatus() === 'connected'}
           onSendMessage={handleSendMessage}
           onDeleteMessage={handleDeleteMessage}
           onDeleteMessages={handleDeleteMessages}
+          room={activeRoom}
         />
       </div>
     </div>

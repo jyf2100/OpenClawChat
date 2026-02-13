@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Room } from '../../types';
+import { Room, RoomType, CollaborationParticipant } from '../../types';
+import { CollaborationRoomForm } from './CollaborationRoomForm';
+import { useGatewayStore } from '../../stores/gatewayStore';
 
 interface CreateRoomModalProps {
   show: boolean;
@@ -7,6 +9,9 @@ interface CreateRoomModalProps {
   room?: Room;
   onCreate: (room: Omit<Room, 'id' | 'unreadCount'>) => void;
   onUpdate?: (id: string, room: Partial<Room>) => void;
+  request: (gatewayId: string, method: string, params: any) => Promise<any>;
+  getStatus: (gatewayId: string) => string;
+  connect: (url: string, token: string, gatewayId: string) => Promise<void>;
 }
 
 export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
@@ -15,11 +20,21 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   room,
   onCreate,
   onUpdate,
+  request,
+  getStatus,
+  connect,
 }) => {
+  const { gateways } = useGatewayStore();
+  
   const [name, setName] = useState(room?.name || '');
   const [customId, setCustomId] = useState(room?.id || '');
   const [type, setType] = useState<'channel' | 'private' | 'group'>(room?.type || 'channel');
   const [description, setDescription] = useState('');
+  const [roomType, setRoomType] = useState<RoomType>(room?.roomType || 'single-gateway');
+  const [selectedGatewayId, setSelectedGatewayId] = useState('');
+  const [participants, setParticipants] = useState<CollaborationParticipant[]>(
+    room?.collaboration?.participants || []
+  );
 
   const isEditMode = !!room;
 
@@ -29,8 +44,16 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
       setCustomId(room?.id || '');
       setType(room?.type || 'channel');
       setDescription('');
+      setRoomType(room?.roomType || 'single-gateway');
+      setParticipants(room?.collaboration?.participants || []);
+      // 默认选中第一个网关
+      if (gateways.length > 0 && !room?.gatewayId) {
+        setSelectedGatewayId(gateways[0].id);
+      } else if (room?.gatewayId) {
+        setSelectedGatewayId(room.gatewayId);
+      }
     }
-  }, [show, room]);
+  }, [show, room, gateways]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -50,15 +73,35 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
       alert('房间名称不能超过50个字符');
       return;
     }
+    
+    if (roomType === 'single-gateway' && !selectedGatewayId) {
+      alert('请选择一个网关');
+      return;
+    }
+    
+    if (roomType === 'collaboration' && participants.length === 0) {
+      alert('协作房间至少需要一个参与者');
+      return;
+    }
 
     if (isEditMode && room && onUpdate) {
       onUpdate(room.id, { name: name.trim(), type });
     } else {
+      const gatewayId = roomType === 'collaboration' 
+        ? '' 
+        : selectedGatewayId;
+        
       const newRoom = {
         id: customId.trim() || undefined,
-        gatewayId: 'default',
+        gatewayId,
         name: name.trim(),
         type,
+        roomType,
+        collaboration: roomType === 'collaboration' ? {
+          participants,
+          autoContinue: true,
+          allowIntervention: true,
+        } : undefined,
       };
       onCreate(newRoom as any);
     }
@@ -66,6 +109,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
     setName('');
     setCustomId('');
     setDescription('');
+    setParticipants([]);
+    setSelectedGatewayId('');
     onClose();
   };
 
@@ -131,16 +176,62 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
             </div>
           </div>
 
-          {!isEditMode && (
+          <div>
+            <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
+              消息类型
+            </label>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setRoomType('single-gateway')}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: roomType === 'single-gateway' ? '2px solid var(--accent)' : '1px solid var(--border)',
+                  background: roomType === 'single-gateway' ? 'rgba(0, 132, 255, 0.1)' : 'var(--bg-secondary)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-normal)' }}>
+                  单网关房间
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  与单个机器人对话
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoomType('collaboration')}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: roomType === 'collaboration' ? '2px solid var(--accent)' : '1px solid var(--border)',
+                  background: roomType === 'collaboration' ? 'rgba(0, 132, 255, 0.1)' : 'var(--bg-secondary)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-normal)' }}>
+                  协作房间
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  多机器人串行协作
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {!isEditMode && roomType === 'single-gateway' && (
             <div>
               <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
-                房间 ID（可选，用于 Agent 连接）
+                所属网关 <span style={{ color: 'var(--danger)' }}>*</span>
               </label>
-              <input
-                type="text"
-                value={customId}
-                onChange={(e) => setCustomId(e.target.value)}
-                placeholder="例如: agent:main:main"
+              <select
+                value={selectedGatewayId}
+                onChange={(e) => setSelectedGatewayId(e.target.value)}
                 style={{
                   width: '100%',
                   padding: '10px 12px',
@@ -150,10 +241,51 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
                   color: 'var(--text-normal)',
                   fontSize: '14px',
                   boxSizing: 'border-box',
+                }}
+              >
+                <option value="">选择网关...</option>
+                {gateways.map(g => (
+                  <option key={g.id} value={g.id}>{g.name} ({g.id})</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {!isEditMode && (
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                房间 ID（可选，用于 Agent 连接）
+              </label>
+              <input
+                type="text"
+                value={customId}
+                onChange={(e) => setCustomId(e.target.value)}
+                placeholder={roomType === 'collaboration' ? '协作房间自动生成 ID' : '例如: agent:main:main'}
+                disabled={roomType === 'collaboration'}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  backgroundColor: roomType === 'collaboration' ? 'var(--bg-tertiary)' : 'var(--bg-input)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '4px',
+                  color: 'var(--text-normal)',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
                   fontFamily: 'monospace',
+                  opacity: roomType === 'collaboration' ? 0.6 : 1,
                 }}
               />
             </div>
+          )}
+          
+          {roomType === 'collaboration' && !isEditMode && (
+            <CollaborationRoomForm
+              participants={participants}
+              onChange={setParticipants}
+              request={request}
+              getStatus={getStatus}
+              connect={connect}
+            />
           )}
 
           <div>

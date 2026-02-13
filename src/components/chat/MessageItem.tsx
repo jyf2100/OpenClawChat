@@ -405,9 +405,18 @@ const MessageItem = memo(function MessageItemComponent(props: MessageItemProps) 
             {/* 消息头部（作者和时间） - 仅在非分组的第一条显示 */}
             {showHeader && !isUser && (
               <div className="flex items-baseline gap-2 mb-1 ml-1">
-                <span className="text-xs font-semibold text-[var(--text-muted)]">
-                  {message.avatar === 'O' ? 'OpenClaw' : '助手'}
-                </span>
+                {message.collaborationContext ? (
+                  <span 
+                    className="text-xs font-semibold"
+                    style={{ color: message.collaborationContext.participantColor || 'var(--accent)' }}
+                  >
+                    {message.collaborationContext.participantName}
+                  </span>
+                ) : (
+                  <span className="text-xs font-semibold text-[var(--text-muted)]">
+                    {message.avatar === 'O' ? 'OpenClaw' : '助手'}
+                  </span>
+                )}
                 <span className="text-[10px] text-[var(--text-muted)] opacity-60">
                   {formatRelativeTime(message.id ? parseInt(message.id) : Date.now())}
                 </span>

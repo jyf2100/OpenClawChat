@@ -2,8 +2,8 @@
  * 输入区域组件
  */
 
-import React, { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
-import type { Attachment } from '../../types';
+import React, { useState, useRef, useEffect, useCallback, KeyboardEvent, useMemo } from 'react';
+import type { Attachment, CollaborationParticipant } from '../../types';
 
 export interface InputAreaProps {
   disabled?: boolean;
@@ -17,6 +17,7 @@ export interface InputAreaProps {
   placeholder?: string;
   maxLength?: number;
   className?: string;
+  participants?: CollaborationParticipant[];
 }
 
 /**
@@ -34,11 +35,17 @@ export function InputArea({
   placeholder = '输入消息... (Enter 发送，Shift+Enter 换行)',
   maxLength = 4000,
   className = '',
+  participants = [],
 }: InputAreaProps) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState('');
+  const [mentionStartPos, setMentionStartPos] = useState(-1);
+  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
+  const mentionListRef = useRef<HTMLDivElement>(null);
 
   // 自动调整文本框高度
   const adjustTextareaHeight = useCallback(() => {
@@ -60,6 +67,62 @@ export function InputArea({
   useEffect(() => {
     adjustTextareaHeight();
   }, [text, adjustTextareaHeight]);
+
+  // 处理 @ 提及
+  const filteredParticipants = useMemo(() => {
+    if (!mentionFilter) return participants;
+    const lower = mentionFilter.toLowerCase();
+    return participants.filter(p => 
+      p.name.toLowerCase().includes(lower)
+    );
+  }, [participants, mentionFilter]);
+
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newText = e.target.value;
+    const cursorPos = e.target.selectionStart || 0;
+    setText(newText);
+
+    // 检测 @ 提及
+    const textBeforeCursor = newText.substring(0, cursorPos);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    
+    if (lastAtIndex !== -1 && participants.length > 0) {
+      // 检查 @ 后面是否是空格或换行（表示刚输入 @）
+      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+      
+      // 如果 @ 后面没有空格或换行，说明正在输入提及
+      if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
+        setMentionStartPos(lastAtIndex);
+        setMentionFilter(textAfterAt);
+        setShowMentions(true);
+        setSelectedMentionIndex(0);
+      } else {
+        setShowMentions(false);
+      }
+    } else {
+      setShowMentions(false);
+    }
+  }, [participants]);
+
+  const insertMention = useCallback((participant: CollaborationParticipant) => {
+    if (mentionStartPos === -1) return;
+    
+    const beforeMention = text.substring(0, mentionStartPos);
+    const afterMention = text.substring(textareaRef.current?.selectionStart || 0);
+    const newText = `${beforeMention}@${participant.name} ${afterMention}`;
+    
+    setText(newText);
+    setShowMentions(false);
+    setMentionFilter('');
+    setMentionStartPos(-1);
+    
+    // 聚焦回输入框
+    setTimeout(() => {
+      const pos = beforeMention.length + participant.name.length + 2;
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  }, [text, mentionStartPos]);
 
   // 清空输入
   const clearInput = useCallback(() => {
@@ -85,6 +148,34 @@ export function InputArea({
 
   // 处理键盘事件
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 处理提及列表导航
+    if (showMentions && filteredParticipants.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedMentionIndex(i => 
+          i < filteredParticipants.length - 1 ? i + 1 : 0
+        );
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedMentionIndex(i => 
+          i > 0 ? i - 1 : filteredParticipants.length - 1
+        );
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        insertMention(filteredParticipants[selectedMentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowMentions(false);
+        return;
+      }
+    }
+
     // Ctrl/Cmd + Enter 发送
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -107,7 +198,7 @@ export function InputArea({
     }
 
     // Escape 清空
-    if (e.key === 'Escape' && !runId) {
+    if (e.key === 'Escape' && !runId && !showMentions) {
       e.preventDefault();
       clearInput();
     }
@@ -210,7 +301,7 @@ export function InputArea({
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             disabled={disabled || !isConnected}
             placeholder={isConnected ? placeholder : '未连接到网关'}
@@ -219,6 +310,35 @@ export function InputArea({
             className="w-full bg-transparent text-[var(--text-normal)] resize-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed min-h-[40px] max-h-[200px] py-2"
             style={{ height: 'auto', lineHeight: '24px' }}
           />
+
+          {/* @ 提及列表 */}
+          {showMentions && filteredParticipants.length > 0 && (
+            <div
+              ref={mentionListRef}
+              className="absolute left-0 right-0 bottom-full mb-2 bg-[var(--bg-floating)] border border-[var(--border)] rounded-lg shadow-lg overflow-hidden z-50"
+              style={{ maxHeight: '200px', overflowY: 'auto' }}
+            >
+              {filteredParticipants.map((p, index) => (
+                <button
+                  key={`${p.gatewayId}-${p.agentId}`}
+                  onClick={() => insertMention(p)}
+                  className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-colors ${
+                    index === selectedMentionIndex 
+                      ? 'bg-[var(--accent)]/10 text-[var(--accent)]' 
+                      : 'text-[var(--text-normal)] hover:bg-[var(--bg-secondary)]'
+                  }`}
+                >
+                  <span
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-medium"
+                    style={{ backgroundColor: p.color || 'var(--accent)' }}
+                  >
+                    {p.name.charAt(0).toUpperCase()}
+                  </span>
+                  <span>{p.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 清空按钮 */}
           {hasContent && !runId && (
