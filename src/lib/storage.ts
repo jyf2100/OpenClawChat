@@ -165,100 +165,6 @@ class LocalStorageAdapter implements StorageAdapter {
 }
 
 /**
- * Tauri Store 适配器（条件加载）
- */
-class TauriStoreAdapter implements StorageAdapter {
-  private store: any = null;
-  private ready: Promise<void>;
-  private initialized: boolean = false;
-  private fallback: StorageAdapter;
-  private useFallback: boolean = false;
-
-  constructor() {
-    this.fallback = new LocalStorageAdapter();
-    this.ready = this.init();
-  }
-
-  private async init() {
-    try {
-      const { load } = await import('@tauri-apps/plugin-store');
-      // 使用相对路径，不指定目录，让它自动存在 AppData 下
-      this.store = await load('clawchat-store.json', { defaults: {}, autoSave: 200 });
-      
-      // 监听存储变化并打印日志
-      await this.store.onKeyChange('clawchat.messages', (value: any) => {
-        console.log('[Storage] Store 消息更新:', value ? '有数据' : '空');
-        // 每次更新都强制保存
-        this.store.save();
-      });
-
-      this.initialized = true;
-
-      // 强制每次加载都重新保存一次，确保文件存在
-      await this.store.save();
-      console.log('[Storage] Store 初始化完成并已保存');
-
-      const migratedFlag = await this.store.get('clawchat.migratedFromLocalStorage');
-      if (!migratedFlag && typeof localStorage !== 'undefined') {
-        const keys = Object.keys(localStorage).filter((k) => k.startsWith('clawchat.'));
-        if (keys.length > 0) {
-          for (const key of keys) {
-            const value = localStorage.getItem(key);
-            if (value === null) continue;
-
-            const existing = await this.store.get(key);
-            if (existing === null || existing === undefined) {
-              await this.store.set(key, value);
-            }
-          }
-          await this.store.set('clawchat.migratedFromLocalStorage', true);
-          await this.store.save();
-        }
-      }
-    } catch (error) {
-      this.useFallback = true;
-    }
-  }
-
-  private async ensureReady() {
-    await this.ready;
-    if (!this.useFallback && !this.initialized) {
-      throw new StorageError('Tauri store 未初始化');
-    }
-  }
-
-  async getItem(key: string): Promise<string | null> {
-    await this.ensureReady();
-    if (this.useFallback) return await this.fallback.getItem(key);
-    return await this.store.get(key);
-  }
-
-  async setItem(key: string, value: string): Promise<void> {
-    await this.ensureReady();
-    if (this.useFallback) return await this.fallback.setItem(key, value);
-    await this.store.set(key, value);
-    await this.store.save();
-  }
-
-  async removeItem(key: string): Promise<void> {
-    await this.ensureReady();
-    if (this.useFallback) return await this.fallback.removeItem(key);
-    await this.store.delete(key);
-    await this.store.save();
-  }
-
-  async clear(): Promise<void> {
-    await this.ensureReady();
-    if (this.useFallback && this.fallback.clear) return await this.fallback.clear();
-    const keys = await this.store.keys();
-    for (const key of keys) {
-      await this.store.delete(key);
-    }
-    await this.store.save();
-  }
-}
-
-/**
  * 存储工具类
  */
 export class Storage {
@@ -271,21 +177,10 @@ export class Storage {
   }
 
   /**
-   * 创建存储适配器（同步检测）
+   * 创建存储适配器
    */
   private createAdapter(): StorageAdapter {
-    // 在浏览器开发环境下直接使用 localStorage
-    if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
-      console.log('[Storage] 浏览器环境，使用 localStorage');
-      return new LocalStorageAdapter();
-    }
-
-    // Tauri 环境尝试使用 Tauri store
-    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-      console.log('[Storage] Tauri 环境，尝试使用 Tauri store');
-      return new TauriStoreAdapter();
-    }
-
+    console.log('[Storage] 使用 localStorage');
     return new LocalStorageAdapter();
   }
 
