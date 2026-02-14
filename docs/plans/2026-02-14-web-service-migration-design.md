@@ -78,34 +78,153 @@ docker-compose.yml          # 方便本地启动（可选）
 src/utils/storage.ts        # localStorage 封装
 ```
 
-## 5. 实施步骤
+## 5. 成功标准
 
-### 步骤 1：清理 Tauri 相关
-- 删除 `src-tauri/` 目录
-- 移除 `package.json` 中的 Tauri 依赖和 scripts
-- 清理 `vite.config.ts` 中的 Tauri 插件
+| # | 验收标准 | 验证命令 | 预期结果 |
+|---|----------|----------|----------|
+| 1 | TypeScript 编译通过 | `npx tsc --noEmit` | exit 0 |
+| 2 | Vite 构建成功 | `npm run build` | exit 0, 生成 dist/ |
+| 3 | 构建产物存在 | `ls dist/index.html` | 文件存在 |
+| 4 | Docker 镜像构建成功 | `docker build -t clawchat-web . -f docker/Dockerfile` | exit 0 |
+| 5 | 容器启动正常 | `docker run -d -p 8080:80 clawchat-web` | 容器运行中 |
+| 6 | 页面可访问 | `curl -s -o /dev/null -w "%{http_code}" http://localhost:8080` | 200 |
 
-### 步骤 2：替换 WebSocket 实现
-- 修改 `useWebSocket` hook，使用浏览器原生 WebSocket API
-- 保持接口不变，只改底层实现
+## 6. 风险分析
 
-### 步骤 3：替换存储实现
-- 创建 `src/utils/storage.ts` 封装 localStorage
-- 修改现有 store 代码，调用新的 storage 工具
+| 风险 | 级别 | 缓解措施 |
+|------|------|----------|
+| WebSocket 跨域限制 | 中 | 确认网关支持浏览器 WebSocket 连接 |
+| localStorage 容量 5MB 限制 | 低 | 消息量可控，影响较小 |
+| 动态 import '@tauri-apps' 报错 | 低 | 已有 try-catch + fallback |
 
-### 步骤 4：添加 Docker 配置
-- 创建 `docker/Dockerfile`
-- 创建 `docker/nginx.conf`
-- 添加 `docker-compose.yml`（可选）
+## 7. 关键发现
 
-### 步骤 5：测试验证
-- `npm run build` 确保构建成功
-- `docker build` 构建镜像
-- `docker run` 本地测试
-- 验证 WebSocket 连接和页面功能
+> ⚠️ 代码已经做了浏览器兼容适配，实际改动范围比预期小很多！
 
-## 6. Dockerfile 参考
+| 模块 | 现状 | 需要改动 |
+|------|------|----------|
+| WebSocket | ✅ 已使用浏览器原生 API | 无需改动 |
+| Storage | ✅ 已有环境检测 + fallback | 可选：简化代码 |
+| Tauri 依赖 | ⚠️ 动态 import | 移除依赖即可 |
 
+## 8. 实施任务（可执行）
+
+### Task 1: 清理 Tauri 依赖
+**Files:**
+- Modify: `package.json`
+- Modify: `package-lock.json` (自动更新)
+
+**Step 1:** 移除 Tauri 相关依赖
+```bash
+npm uninstall @tauri-apps/api @tauri-apps/plugin-opener @tauri-apps/plugin-store @tauri-apps/cli
+```
+
+**Step 2:** 移除 Tauri 相关 scripts
+```json
+// 从 package.json scripts 中移除
+"tauri": "tauri"
+```
+
+**Step 3:** 验证
+```bash
+npm run build
+# 预期: 构建成功，无 Tauri 相关报错
+```
+
+---
+
+### Task 2: 删除 Tauri 目录
+**Files:**
+- Delete: `src-tauri/` (整个目录)
+
+**Step 1:** 删除目录
+```bash
+rm -rf src-tauri/
+```
+
+**Step 2:** 验证
+```bash
+ls src-tauri 2>&1
+# 预期: No such file or directory
+```
+
+---
+
+### Task 3: 清理 vite.config.ts
+**Files:**
+- Modify: `vite.config.ts`
+
+**Step 1:** 移除 Tauri 相关注释和变量
+```typescript
+// 移除这行
+const host = process.env.TAURI_DEV_HOST;
+
+// server 配置中移除
+host: host || false,
+hmr: host ? { ... } : undefined,
+watch: { ignored: ["**/src-tauri/**"] },
+```
+
+**Step 2:** 验证
+```bash
+npx tsc --noEmit
+npm run build
+# 预期: 无报错
+```
+
+---
+
+### Task 4: 添加 Docker 配置
+**Files:**
+- Create: `docker/Dockerfile`
+- Create: `docker/nginx.conf`
+- Create: `docker/.dockerignore`
+- Create: `docker-compose.yml`
+
+**Step 1:** 创建目录和文件（见下方详细内容）
+
+**Step 2:** 构建镜像
+```bash
+docker build -t clawchat-web . -f docker/Dockerfile
+# 预期: Successfully built xxx
+```
+
+**Step 3:** 运行容器
+```bash
+docker run -d -p 8080:80 --name clawchat-test clawchat-web
+curl http://localhost:8080
+# 预期: 返回 HTML 内容
+```
+
+**Step 4:** 清理测试容器
+```bash
+docker rm -f clawchat-test
+```
+
+---
+
+### Task 5: 端到端验证
+**Step 1:** 完整构建流程
+```bash
+npm ci
+npm run build
+docker build -t clawchat-web . -f docker/Dockerfile
+docker run -d -p 8080:80 --name clawchat-test clawchat-web
+```
+
+**Step 2:** 功能验证
+- 浏览器访问 http://localhost:8080
+- 验证页面加载正常
+- 验证 WebSocket 连接（需要网关服务）
+
+**Step 3:** 清理
+```bash
+docker rm -f clawchat-test
+```
+
+## 9. Docker 配置文件详情
+
+### 9.1 docker/Dockerfile
 ```dockerfile
 # 阶段1: 构建
 FROM node:20-alpine AS builder
@@ -120,10 +239,55 @@ FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
 ```
 
-## 7. nginx.conf 要点
+### 9.2 docker/nginx.conf
+```nginx
+server {
+    listen 80;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
 
-- 配置 SPA 路由回退（所有路由返回 index.html）
-- 静态资源缓存策略
-- gzip 压缩
+    # gzip 压缩
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    gzip_min_length 1000;
+
+    # 静态资源缓存
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # SPA 路由回退
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+### 9.3 docker/.dockerignore
+```
+node_modules/
+dist/
+src-tauri/
+.git/
+*.md
+.claude/
+.opencode/
+```
+
+### 9.4 docker-compose.yml（可选）
+```yaml
+version: '3.8'
+services:
+  clawchat-web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+```
