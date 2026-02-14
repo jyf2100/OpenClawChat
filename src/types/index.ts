@@ -6,6 +6,23 @@ export enum GatewayStatus {
   Error = "error",
 }
 
+// Agent 文件配置
+export interface AgentFileConfig {
+  soulMd?: string;       // SOUL.md - 人格定义
+  agentsMd?: string;     // AGENTS.md - 工作区指令
+  userMd?: string;       // USER.md - 用户档案
+  toolsMd?: string;      // TOOLS.md - 工具配置
+  heartbeatMd?: string;  // HEARTBEAT.md - 心跳任务
+}
+
+// Agent 配置
+export interface AgentConfig {
+  agentId: string;
+  model?: string;              // 模型，不设置则使用网关默认
+  useDefaultModel?: boolean;   // 是否使用网关默认模型
+  files?: AgentFileConfig;     // 文件配置
+}
+
 // 网关配置
 export interface GatewayConfig {
   id: string;
@@ -14,6 +31,9 @@ export interface GatewayConfig {
   token?: string;
   status: GatewayStatus;
   autoConnect?: boolean;
+  defaultModel?: string;                    // 网关默认模型
+  // 每个 agent 的配置，key 是 agentId
+  agentConfigs?: Record<string, AgentConfig>;
 }
 
 // 网关类型别名（用于兼容）
@@ -313,6 +333,26 @@ export interface AgentsListResult {
   mainKey: string;
   scope: string;
   agents: GatewayAgentRow[];
+}
+
+/**
+ * sessions.list 响应中的默认配置
+ */
+export interface GatewaySessionsDefaults {
+  modelProvider: string | null;
+  model: string | null;
+  contextTokens: number | null;
+}
+
+/**
+ * sessions.list 响应
+ */
+export interface SessionsListResult {
+  ts: number;
+  path: string;
+  count: number;
+  defaults: GatewaySessionsDefaults;
+  sessions: any[];
 }
 
 // ==================== 协作房间扩展类型 ====================

@@ -20,6 +20,7 @@ export const GatewayForm: React.FC<GatewayFormProps> = ({
     url: gateway?.url || 'ws://127.0.0.1:18789',
     token: gateway?.token || '',
     autoConnect: gateway?.autoConnect || false,
+    defaultModel: gateway?.defaultModel || '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -72,6 +73,7 @@ export const GatewayForm: React.FC<GatewayFormProps> = ({
         token: formData.token.trim() || undefined,
         status: gateway?.status || GatewayStatus.Disconnected,
         autoConnect: formData.autoConnect,
+        defaultModel: formData.defaultModel.trim() || undefined,
       };
 
       if (gateway) {
@@ -166,6 +168,24 @@ export const GatewayForm: React.FC<GatewayFormProps> = ({
         />
         <p className="mt-1 text-sm text-gray-500">
           如果网关需要认证，请输入令牌
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="defaultModel" className="block text-sm font-medium text-gray-300 mb-1">
+          默认模型（可选）
+        </label>
+        <input
+          type="text"
+          id="defaultModel"
+          name="defaultModel"
+          value={formData.defaultModel}
+          onChange={handleChange}
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="例如: claude-sonnet-4"
+        />
+        <p className="mt-1 text-sm text-gray-500">
+          该网关下 Agent 的默认模型，Agent 可单独覆盖
         </p>
       </div>
 

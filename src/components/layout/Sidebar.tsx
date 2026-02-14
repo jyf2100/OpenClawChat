@@ -13,6 +13,7 @@ interface SidebarProps {
   rooms: Room[];
   activeRoomId: string | null;
   onRoomSelect: (roomId: string) => void;
+  onAgentConfig?: (gateway: Gateway) => void;
   request: (gatewayId: string, method: string, params: any) => Promise<any>;
   getStatus: (gatewayId: string) => string;
   connect: (url: string, token: string, gatewayId: string) => Promise<void>;
@@ -36,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   rooms,
   activeRoomId,
   onRoomSelect,
+  onAgentConfig,
   request,
   getStatus,
   connect,
@@ -342,6 +344,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
             style={{ display: 'flex', gap: '2px', opacity: 0.6 }}
             onClick={(e) => e.stopPropagation()}
           >
+            {onAgentConfig && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAgentConfig(gateway);
+                }}
+                title="Agent 配置"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  fontSize: '12px',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                🤖
+              </button>
+            )}
             <button
               onClick={(e) => openEditGateway(gateway.id, e)}
               title="编辑网关"

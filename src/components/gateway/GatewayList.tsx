@@ -6,9 +6,10 @@ import { createPortal } from 'react-dom';
 
 interface GatewayListProps {
   onEditGateway?: (gateway: GatewayConfig) => void;
+  onAgentConfig?: (gateway: GatewayConfig) => void;
 }
 
-export const GatewayList: React.FC<GatewayListProps> = ({ onEditGateway }) => {
+export const GatewayList: React.FC<GatewayListProps> = ({ onEditGateway, onAgentConfig }) => {
   const { gateways, removeGateway } = useGatewayStore();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletingGateway, setDeletingGateway] = useState<GatewayConfig | null>(null);
@@ -57,6 +58,7 @@ export const GatewayList: React.FC<GatewayListProps> = ({ onEditGateway }) => {
             gateway={gateway}
             onEdit={onEditGateway}
             onDelete={handleDelete}
+            onAgentConfig={onAgentConfig}
           />
         ))}
       </div>

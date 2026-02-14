@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Sidebar, Header, MainChat } from './components/layout';
 import { ToastComponent, useToast } from './components/ui';
+import { AgentConfigPage } from './components/gateway';
 import { useGatewayStore } from './stores/gatewayStore';
 import { useRoomStore } from './stores/roomStore';
 import { useCollaborationQueueStore } from './stores/collaborationQueueStore';
@@ -8,7 +9,7 @@ import { useCollaborationStore } from './stores/collaborationStore';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useGlobalKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useCollaboration, parseMentions, filterParticipantsByMentions } from './hooks/useCollaboration';
-import { ChatMessage } from './types';
+import { ChatMessage, GatewayConfig } from './types';
 import './styles/globals.css';
 
 function App() {
@@ -16,6 +17,9 @@ function App() {
   const { clearAllActiveSessions } = useCollaborationStore();
 
   const { error: showError } = useToast();
+
+  // Agent 配置页面状态
+  const [agentConfigGateway, setAgentConfigGateway] = useState<GatewayConfig | null>(null);
 
   useGlobalKeyboardShortcuts();
 
@@ -513,6 +517,14 @@ function App() {
     setActiveRoom(roomId);
   };
 
+  const handleAgentConfig = (gateway: GatewayConfig) => {
+    setAgentConfigGateway(gateway);
+  };
+
+  const handleAgentConfigBack = () => {
+    setAgentConfigGateway(null);
+  };
+
   const activeRoom = rooms.find(r => r.id === activeRoomId) || null;
   const currentMessages = activeRoomId ? getMessages(activeRoomId) : [];
 
@@ -536,6 +548,22 @@ function App() {
     return 'disconnected';
   };
 
+  // Agent 配置页面
+  if (agentConfigGateway) {
+    return (
+      <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900">
+        <ToastComponent />
+        <AgentConfigPage
+          gateway={agentConfigGateway}
+          onBack={handleAgentConfigBack}
+          request={request}
+          getStatus={getStatus}
+          connect={connect}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900">
       <ToastComponent />
@@ -554,6 +582,7 @@ function App() {
           rooms={rooms}
           activeRoomId={activeRoomId}
           onRoomSelect={handleRoomSelect}
+          onAgentConfig={handleAgentConfig}
           request={request}
           getStatus={getStatus}
           connect={connect}
