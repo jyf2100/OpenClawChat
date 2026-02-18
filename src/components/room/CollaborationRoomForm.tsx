@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useGatewayStore } from '../../stores/gatewayStore';
-import type { CollaborationParticipant, GatewayAgentRow, AgentsListResult } from '../../types';
+import type { CollaborationParticipant, GatewayAgentRow, AgentsListResult, JudgeConfig } from '../../types';
 
 interface CollaborationRoomFormProps {
   participants: CollaborationParticipant[];
   onChange: (participants: CollaborationParticipant[]) => void;
+  // 多轮配置
+  maxRounds?: number;
+  onMaxRoundsChange?: (maxRounds: number) => void;
+  // 裁判配置
+  judge?: JudgeConfig;
+  onJudgeChange?: (judge: JudgeConfig | undefined) => void;
   request: (gatewayId: string, method: string, params: any) => Promise<any>;
   getStatus: (gatewayId: string) => string;
   connect: (url: string, token: string, gatewayId: string) => Promise<void>;
@@ -21,12 +27,16 @@ interface EditingState {
 export const CollaborationRoomForm: React.FC<CollaborationRoomFormProps> = ({
   participants,
   onChange,
+  maxRounds = 10,
+  onMaxRoundsChange,
+  judge,
+  onJudgeChange,
   request,
   getStatus,
   connect,
 }) => {
   const { gateways } = useGatewayStore();
-  
+
   const [selectedGatewayId, setSelectedGatewayId] = useState('');
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [agents, setAgents] = useState<GatewayAgentRow[]>([]);
@@ -35,6 +45,13 @@ export const CollaborationRoomForm: React.FC<CollaborationRoomFormProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [editingParticipant, setEditingParticipant] = useState<EditingState | null>(null);
+
+  // 裁判配置状态
+  const [judgeEnabled, setJudgeEnabled] = useState(!!judge);
+  const [judgeGatewayId, setJudgeGatewayId] = useState(judge?.gatewayId || '');
+  const [judgeAgentId, setJudgeAgentId] = useState(judge?.agentId || '');
+  const [judgeAgents, setJudgeAgents] = useState<GatewayAgentRow[]>([]);
+  const [loadingJudgeAgents, setLoadingJudgeAgents] = useState(false);
   
   const loadAgents = useCallback(async (gatewayId: string) => {
     if (!gatewayId) {
@@ -131,6 +148,64 @@ export const CollaborationRoomForm: React.FC<CollaborationRoomFormProps> = ({
       }
     }
   }, [selectedAgentId, agents, displayName]);
+
+  // 加载裁判 Agent 列表
+  const loadJudgeAgents = useCallback(async (gatewayId: string) => {
+    if (!gatewayId) {
+      setJudgeAgents([]);
+      setJudgeAgentId('');
+      return;
+    }
+
+    setLoadingJudgeAgents(true);
+    try {
+      const res = await request(gatewayId, 'agents.list', {}) as AgentsListResult | null;
+      if (res?.agents) {
+        setJudgeAgents(res.agents);
+        if (!judgeAgentId || !res.agents.some((a: GatewayAgentRow) => a.id === judgeAgentId)) {
+          setJudgeAgentId(res.defaultId || res.agents[0]?.id || '');
+        }
+      }
+    } catch (err) {
+      console.error('[CollaborationRoomForm] 加载裁判 Agent 列表失败:', err);
+      setJudgeAgents([]);
+    } finally {
+      setLoadingJudgeAgents(false);
+    }
+  }, [request, judgeAgentId]);
+
+  // 监听裁判网关变更
+  useEffect(() => {
+    if (judgeEnabled && judgeGatewayId) {
+      const status = getStatus(judgeGatewayId);
+      if (status === 'connected') {
+        loadJudgeAgents(judgeGatewayId);
+      } else {
+        // 如果未连接，尝试连接
+        const gateway = gateways.find(g => g.id === judgeGatewayId);
+        if (gateway?.token) {
+          connect(gateway.url, gateway.token, judgeGatewayId).then(() => {
+            loadJudgeAgents(judgeGatewayId);
+          }).catch(console.error);
+        }
+      }
+    }
+  }, [judgeEnabled, judgeGatewayId, getStatus, gateways, connect, loadJudgeAgents]);
+
+  // 同步裁判配置到父组件
+  useEffect(() => {
+    if (judgeEnabled && judgeGatewayId && judgeAgentId && onJudgeChange) {
+      onJudgeChange({
+        gatewayId: judgeGatewayId,
+        agentId: judgeAgentId,
+        name: '裁判',
+        avatar: '🎯',
+        color: '#3b82f6',
+      });
+    } else if (!judgeEnabled && onJudgeChange) {
+      onJudgeChange(undefined);
+    }
+  }, [judgeEnabled, judgeGatewayId, judgeAgentId, onJudgeChange]);
   
   const addParticipant = () => {
     if (!selectedGatewayId || !selectedAgentId || !displayName.trim()) {
@@ -473,6 +548,132 @@ export const CollaborationRoomForm: React.FC<CollaborationRoomFormProps> = ({
           添加
         </button>
       </div>
+
+      {/* 多轮配置 */}
+      <h4 style={{ margin: '20px 0 12px', fontSize: '14px', fontWeight: 600, color: 'var(--text-normal)' }}>
+        多轮对话设置
+      </h4>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+        <label style={{ fontSize: '13px', color: 'var(--text-normal)', whiteSpace: 'nowrap' }}>
+          最大轮次:
+        </label>
+        <input
+          type="number"
+          min="1"
+          max="50"
+          value={maxRounds}
+          onChange={(e) => onMaxRoundsChange?.(Math.max(1, Math.min(50, parseInt(e.target.value) || 10)))}
+          style={{
+            width: '80px',
+            padding: '8px 12px',
+            border: '1px solid var(--border)',
+            borderRadius: '6px',
+            fontSize: '13px',
+            background: 'var(--bg-input)',
+            color: 'var(--text-normal)',
+          }}
+        />
+        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+          （每轮所有参与者发言一次）
+        </span>
+      </div>
+
+      {/* 裁判配置 */}
+      <h4 style={{ margin: '20px 0 12px', fontSize: '14px', fontWeight: 600, color: 'var(--text-normal)' }}>
+        裁判配置（可选）
+      </h4>
+      <div style={{ marginBottom: '12px' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={judgeEnabled}
+            onChange={(e) => setJudgeEnabled(e.target.checked)}
+            style={{ width: '16px', height: '16px' }}
+          />
+          <span style={{ fontSize: '13px', color: 'var(--text-normal)' }}>
+            启用 AI 裁判（每轮自动总结并决定是否继续）
+          </span>
+        </label>
+      </div>
+
+      {judgeEnabled && (
+        <div style={{
+          padding: '12px',
+          background: 'var(--bg-secondary)',
+          borderRadius: '8px',
+          border: '1px solid var(--border)',
+        }}>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+            AI 裁判会在每轮结束后分析对话，提供总结、发现问题、给出建议，并决定是否继续下一轮。
+          </p>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <select
+              value={judgeGatewayId}
+              onChange={(e) => setJudgeGatewayId(e.target.value)}
+              disabled={loadingJudgeAgents}
+              style={{
+                flex: '1 1 150px',
+                minWidth: '120px',
+                padding: '8px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                fontSize: '13px',
+                background: 'var(--bg-input)',
+                color: 'var(--text-normal)',
+              }}
+            >
+              <option value="">选择裁判网关...</option>
+              {gateways.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+
+            <select
+              value={judgeAgentId}
+              onChange={(e) => setJudgeAgentId(e.target.value)}
+              disabled={!judgeGatewayId || loadingJudgeAgents}
+              style={{
+                flex: '1 1 150px',
+                minWidth: '120px',
+                padding: '8px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                fontSize: '13px',
+                background: 'var(--bg-input)',
+                color: 'var(--text-normal)',
+                opacity: !judgeGatewayId || loadingJudgeAgents ? 0.6 : 1,
+              }}
+            >
+              <option value="">
+                {loadingJudgeAgents ? '加载中...' : '选择裁判 Agent...'}
+              </option>
+              {judgeAgents.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.identity?.name || a.name || a.id}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {!judgeGatewayId && (
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '8px 0 0' }}>
+              提示：未配置裁判时，每轮结束后需要人工决定是否继续。
+            </p>
+          )}
+        </div>
+      )}
+
+      {!judgeEnabled && (
+        <div style={{
+          padding: '12px',
+          background: 'rgba(59, 130, 246, 0.1)',
+          borderRadius: '8px',
+          fontSize: '12px',
+          color: 'var(--text-muted)',
+        }}>
+          未启用裁判时，每轮结束后将由人工决定是否继续下一轮。你也可以在对话中使用 @Agent 临时指定某个 Agent 代行裁判职责。
+        </div>
+      )}
     </div>
   );
 };

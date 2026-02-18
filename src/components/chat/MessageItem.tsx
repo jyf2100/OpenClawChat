@@ -149,6 +149,88 @@ function StreamingIndicator() {
 }
 
 /**
+ * 裁判消息渲染组件
+ */
+function JudgeMessageDisplay({
+  round,
+  response,
+}: {
+  round: number;
+  response: {
+    summary: string;
+    issues: string[];
+    suggestions: string[];
+    shouldContinue: boolean;
+    reason: string;
+  };
+}) {
+  return (
+    <div className="judge-message">
+      {/* 标题 */}
+      <div className="flex items-center gap-2 mb-3 pb-2 border-b border-blue-200 dark:border-blue-700">
+        <span className="text-lg">🎯</span>
+        <span className="font-semibold text-blue-700 dark:text-blue-300">
+          第 {round} 轮裁判总结
+        </span>
+      </div>
+
+      {/* 本轮总结 */}
+      <div className="mb-3">
+        <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">📋 本轮总结</div>
+        <div className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+          {response.summary}
+        </div>
+      </div>
+
+      {/* 发现的问题 */}
+      {response.issues.length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1">⚠️ 发现的问题</div>
+          <ul className="list-disc list-inside text-sm text-gray-700 dark:text-gray-300 space-y-1">
+            {response.issues.map((issue, index) => (
+              <li key={index}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 下轮建议 */}
+      {response.suggestions.length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-1">💡 下轮建议</div>
+          <ul className="list-disc list-inside text-sm text-gray-700 dark:text-gray-300 space-y-1">
+            {response.suggestions.map((suggestion, index) => (
+              <li key={index}>{suggestion}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 终止决定 */}
+      <div className={`mt-3 pt-2 border-t ${
+        response.shouldContinue
+          ? 'border-green-200 dark:border-green-700'
+          : 'border-purple-200 dark:border-purple-700'
+      }`}>
+        <div className={`flex items-center gap-2 text-sm font-medium ${
+          response.shouldContinue
+            ? 'text-green-600 dark:text-green-400'
+            : 'text-purple-600 dark:text-purple-400'
+        }`}>
+          <span>{response.shouldContinue ? '▶️' : '🏁'}</span>
+          <span>
+            {response.shouldContinue ? '继续下一轮' : '协作完成'}
+          </span>
+        </div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          原因: {response.reason}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * 简单的 Markdown 渲染器 - 使用 useMemo 缓存解析结果
  */
 const SimpleMarkdown = memo(function SimpleMarkdownComponent({ content }: { content: string }) {
@@ -232,6 +314,7 @@ const MessageItem = memo(function MessageItemComponent(props: MessageItemProps) 
   } = props;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
+  const isJudge = !!message.judgeContext;  // 裁判消息
 
   // 右键菜单状态
   const [contextMenu, setContextMenu] = useState<{
@@ -385,13 +468,13 @@ const MessageItem = memo(function MessageItemComponent(props: MessageItemProps) 
               className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white transition-opacity duration-200 ${
                 !showHeader && isGrouped ? 'opacity-0' : 'opacity-100'
               }`}
-              style={{ 
-                background: 'var(--accent-gradient)',
+              style={{
+                background: isJudge ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)' : 'var(--accent-gradient)',
                 boxShadow: 'var(--shadow-sm)',
                 visibility: !showHeader && isGrouped ? 'hidden' : 'visible'
               }}
             >
-              {message.avatar}
+              {isJudge ? '🎯' : message.avatar}
             </div>
           )}
           
@@ -405,8 +488,13 @@ const MessageItem = memo(function MessageItemComponent(props: MessageItemProps) 
             {/* 消息头部（作者和时间） - 仅在非分组的第一条显示 */}
             {showHeader && !isUser && (
               <div className="flex items-baseline gap-2 mb-1 ml-1">
-                {message.collaborationContext ? (
-                  <span 
+                {/* 裁判消息头部 */}
+                {isJudge ? (
+                  <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    🎯 裁判 · 第 {message.judgeContext?.round} 轮
+                  </span>
+                ) : message.collaborationContext ? (
+                  <span
                     className="text-xs font-semibold"
                     style={{ color: message.collaborationContext.participantColor || 'var(--accent)' }}
                   >
@@ -428,14 +516,24 @@ const MessageItem = memo(function MessageItemComponent(props: MessageItemProps) 
               className={`px-4 py-2.5 shadow-sm transition-all duration-200 ${
                 isUser
                   ? 'text-white rounded-2xl rounded-br-sm'
+                  : isJudge
+                  ? 'bg-blue-50 text-blue-900 border border-blue-200 rounded-2xl rounded-bl-sm dark:bg-blue-900/20 dark:text-blue-100 dark:border-blue-700'
                   : isTool
                   ? 'bg-orange-50 text-orange-900 border border-orange-200 rounded-2xl rounded-bl-sm dark:bg-orange-900/20 dark:text-orange-100 dark:border-orange-800'
                   : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-bl-sm'
               }`}
               style={isUser ? { background: 'var(--accent-gradient)' } : {}}
             >
-              {/* 文本内容 */}
-              {message.text && (
+              {/* 裁判消息内容 */}
+              {isJudge && message.judgeContext && (
+                <JudgeMessageDisplay
+                  round={message.judgeContext.round}
+                  response={message.judgeContext.response}
+                />
+              )}
+
+              {/* 文本内容 - 非裁判消息时显示 */}
+              {!isJudge && message.text && (
                 <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                   {message.streaming && message.loading ? (
                     <div className="flex items-center gap-2">

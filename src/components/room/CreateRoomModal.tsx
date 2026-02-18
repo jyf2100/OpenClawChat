@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Room, RoomType, CollaborationParticipant } from '../../types';
+import { Room, RoomType, CollaborationParticipant, JudgeConfig } from '../../types';
 import { CollaborationRoomForm } from './CollaborationRoomForm';
 import { useGatewayStore } from '../../stores/gatewayStore';
 
@@ -35,6 +35,9 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const [participants, setParticipants] = useState<CollaborationParticipant[]>(
     room?.collaboration?.participants || []
   );
+  // 多轮配置状态
+  const [maxRounds, setMaxRounds] = useState(room?.collaboration?.maxRounds || 10);
+  const [judge, setJudge] = useState<JudgeConfig | undefined>(room?.collaboration?.judge);
 
   const isEditMode = !!room;
 
@@ -46,6 +49,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
       setDescription('');
       setRoomType(room?.roomType || 'single-gateway');
       setParticipants(room?.collaboration?.participants || []);
+      setMaxRounds(room?.collaboration?.maxRounds || 10);
+      setJudge(room?.collaboration?.judge);
       // 默认选中第一个网关
       if (gateways.length > 0 && !room?.gatewayId) {
         setSelectedGatewayId(gateways[0].id);
@@ -87,10 +92,10 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
     if (isEditMode && room && onUpdate) {
       onUpdate(room.id, { name: name.trim(), type });
     } else {
-      const gatewayId = roomType === 'collaboration' 
-        ? '' 
+      const gatewayId = roomType === 'collaboration'
+        ? ''
         : selectedGatewayId;
-        
+
       const newRoom = {
         id: customId.trim() || undefined,
         gatewayId,
@@ -101,6 +106,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
           participants,
           autoContinue: true,
           allowIntervention: true,
+          maxRounds,
+          judge,
         } : undefined,
       };
       onCreate(newRoom as any);
@@ -110,6 +117,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
     setCustomId('');
     setDescription('');
     setParticipants([]);
+    setMaxRounds(10);
+    setJudge(undefined);
     setSelectedGatewayId('');
     onClose();
   };
@@ -282,6 +291,10 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
             <CollaborationRoomForm
               participants={participants}
               onChange={setParticipants}
+              maxRounds={maxRounds}
+              onMaxRoundsChange={setMaxRounds}
+              judge={judge}
+              onJudgeChange={setJudge}
               request={request}
               getStatus={getStatus}
               connect={connect}

@@ -144,6 +144,7 @@ export interface ChatMessage {
   attachments?: Attachment[];
   runId?: string;
   collaborationContext?: CollaborationContext;
+  judgeContext?: JudgeContext;  // 裁判消息上下文
 }
 
 /**
@@ -160,6 +161,7 @@ export interface RenderedMessage {
   streaming: boolean;
   loading: boolean;
   collaborationContext?: CollaborationContext;
+  judgeContext?: JudgeContext;  // 裁判消息上下文
 }
 
 /**
@@ -376,18 +378,66 @@ export interface CollaborationParticipant {
 }
 
 /**
+ * 裁判配置
+ */
+export interface JudgeConfig {
+  gatewayId: string;         // 裁判所在网关
+  agentId: string;           // 裁判 Agent ID
+  name?: string;             // 裁判显示名称，默认 "裁判"
+  avatar?: string;           // 裁判头像
+  color?: string;            // 裁判消息颜色
+  prompt?: string;           // 自定义提示词（覆盖默认）
+}
+
+/**
  * 协作配置
  */
 export interface CollaborationConfig {
   participants: CollaborationParticipant[];
   autoContinue: boolean;
   allowIntervention: boolean;
+  // 多轮配置
+  maxRounds?: number;        // 最大轮次，默认 10
+  // 裁判配置（可选）
+  judge?: JudgeConfig;
 }
 
 /**
  * 协作状态
  */
 export type CollaborationStatus = 'idle' | 'active' | 'paused' | 'completed';
+
+/**
+ * 裁判响应
+ */
+export interface JudgeResponse {
+  round: number;             // 轮次
+  summary: string;           // 本轮总结
+  issues: string[];          // 发现的问题
+  suggestions: string[];     // 下轮建议
+  shouldContinue: boolean;   // 是否继续
+  reason: string;            // 决定原因
+  timestamp: number;         // 时间戳
+}
+
+/**
+ * 人工裁判输入
+ */
+export interface HumanJudgeInput {
+  round: number;
+  guidance?: string;         // 用户给下一轮的指导
+  timestamp: number;
+}
+
+/**
+ * 协作终止原因
+ */
+export type CollaborationTerminationReason =
+  | 'ai_judge_decided'      // AI 裁判决定完成
+  | 'agent_judge_decided'   // @Agent 代行裁判决定完成
+  | 'user_decided'          // 用户在决策面板点击完成
+  | 'max_rounds'            // 达到最大轮次
+  | 'user_cancel';          // 用户中断
 
 /**
  * 协作会话
@@ -397,11 +447,17 @@ export interface CollaborationSession {
   roomId: string;
   status: CollaborationStatus;
   currentStep: number;
+  currentRound: number;              // 当前轮次，从 1 开始
+  maxRounds: number;                 // 最大轮次
   participants: CollaborationParticipant[];
+  judge?: JudgeConfig;               // 裁判配置（可选）
   userMessageId: string;
   userMessage: string;
   completedSteps: number[];
   failedSteps: Record<number, string>;
+  judgeResponses: JudgeResponse[];   // 每轮裁判响应
+  humanJudgeInputs: HumanJudgeInput[]; // 人工裁判输入
+  terminationReason?: CollaborationTerminationReason; // 终止原因
   createdAt: number;
   updatedAt: number;
 }
@@ -412,6 +468,15 @@ export interface CollaborationSession {
 export interface CollaborationContext {
   sessionId: string;
   step: number;
+  round: number;             // 轮次
   participantName: string;
   participantColor?: string;
+}
+
+/**
+ * 裁判消息上下文
+ */
+export interface JudgeContext {
+  round: number;
+  response: JudgeResponse;
 }

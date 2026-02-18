@@ -13,17 +13,22 @@ export const CollaborationStatusIndicator: React.FC<CollaborationStatusIndicator
 }) => {
   const { getActiveSessionByRoom } = useCollaborationStore();
   const { getQueueLength } = useCollaborationQueueStore();
-  
+
   const session = getActiveSessionByRoom(roomId);
   const queueLength = getQueueLength(roomId);
-  
+
   if (!session) return null;
-  
+
   const currentParticipant = session.participants[session.currentStep];
   const completedCount = session.completedSteps.length;
   const totalCount = session.participants.length;
   const failedCount = Object.keys(session.failedSteps).length;
-  
+
+  // 多轮信息
+  const currentRound = session.currentRound;
+  const maxRounds = session.maxRounds;
+  const hasJudge = !!session.judge;
+
   return (
     <div
       style={{
@@ -61,31 +66,68 @@ export const CollaborationStatusIndicator: React.FC<CollaborationStatusIndicator
             协作中
           </span>
         </div>
-        
+
+        {/* 轮次信息 */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '2px 8px',
+            background: 'var(--bg-tertiary)',
+            borderRadius: '8px',
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>轮</span>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-normal)' }}>
+            {currentRound}/{maxRounds}
+          </span>
+        </div>
+
+        {/* 裁判标识 */}
+        {hasJudge && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '2px 8px',
+              background: 'rgba(59, 130, 246, 0.1)',
+              borderRadius: '8px',
+              flexShrink: 0,
+            }}
+            title="AI 裁判已启用"
+          >
+            <span style={{ fontSize: '12px' }}>🎯</span>
+            <span style={{ fontSize: '11px', color: 'rgba(59, 130, 246, 1)' }}>AI裁判</span>
+          </div>
+        )}
+
         <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           {currentParticipant?.name} ({completedCount}/{totalCount})
         </span>
-        
+
         {failedCount > 0 && (
           <span style={{ fontSize: '11px', color: 'var(--warning)' }}>
             {failedCount} 失败
           </span>
         )}
-        
+
         {queueLength > 0 && (
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
             队列: {queueLength}
           </span>
         )}
       </div>
-      
+
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: '3px' }}>
           {session.participants.map((p, index) => {
             const isCompleted = session.completedSteps.includes(index);
             const isCurrent = index === session.currentStep;
             const isFailed = session.failedSteps[index] !== undefined;
-            
+
             return (
               <div
                 key={index}
@@ -98,11 +140,11 @@ export const CollaborationStatusIndicator: React.FC<CollaborationStatusIndicator
                   borderRadius: '50%',
                   fontSize: '10px',
                   fontWeight: 600,
-                  background: isFailed 
-                    ? 'var(--danger)' 
-                    : isCompleted 
-                      ? 'var(--success)' 
-                      : isCurrent 
+                  background: isFailed
+                    ? 'var(--danger)'
+                    : isCompleted
+                      ? 'var(--success)'
+                      : isCurrent
                         ? p.color || 'var(--accent)'
                         : 'var(--bg-tertiary)',
                   color: isCompleted || isCurrent || isFailed ? 'white' : 'var(--text-muted)',
@@ -116,7 +158,7 @@ export const CollaborationStatusIndicator: React.FC<CollaborationStatusIndicator
             );
           })}
         </div>
-        
+
         {onCancel && (
           <button
             onClick={() => onCancel(session.sessionId)}

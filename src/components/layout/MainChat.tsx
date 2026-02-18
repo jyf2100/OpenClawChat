@@ -3,6 +3,7 @@ import { ChatMessage, RenderedMessage, ContentBlock, Attachment, Room } from '..
 import { MessageList } from '../chat/MessageList';
 import { InputArea } from '../chat/InputArea';
 import { CollaborationStatusIndicator } from '../room/CollaborationStatusIndicator';
+import { HumanJudgePanel } from '../room/HumanJudgePanel';
 import { formatRelativeTime } from '../../utils/timeFormat';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 
@@ -13,6 +14,9 @@ interface MainChatProps {
   onDeleteMessage?: (messageId: string) => void;
   onDeleteMessages?: (messageIds: string[]) => void;
   room?: Room | null;
+  // 人工裁判相关
+  onHumanJudgeContinue?: (sessionId: string, guidance?: string) => void;
+  onHumanJudgeComplete?: (sessionId: string) => void;
 }
 
 export const MainChat: React.FC<MainChatProps> = ({
@@ -22,17 +26,28 @@ export const MainChat: React.FC<MainChatProps> = ({
   onDeleteMessage,
   onDeleteMessages,
   room,
+  onHumanJudgeContinue,
+  onHumanJudgeComplete,
 }) => {
   const [isSelectionMode, setIsSelectionMode] = React.useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = React.useState<Set<string>>(new Set());
-  
-  const { getActiveSessionByRoom, cancelSession } = useCollaborationStore();
-  
+
+  const { getActiveSessionByRoom, terminateSession } = useCollaborationStore();
+
   const activeRoomId = room?.id || (messages[0]?.roomId);
-  
+
   const activeSession = activeRoomId ? getActiveSessionByRoom(activeRoomId) : undefined;
-  
+
   const participants = room?.collaboration?.participants || [];
+
+  // 判断是否需要显示人工裁判面板
+  // 条件：协作进行中，没有配置 AI 裁判，且不是第一轮（第一轮还没开始）
+  const showHumanJudgePanel = activeSession
+    && !activeSession.judge  // 没有配置 AI 裁判
+    && activeSession.status === 'active'
+    && activeSession.completedSteps.length >= activeSession.participants.length  // 当前轮次已完成
+    && onHumanJudgeContinue
+    && onHumanJudgeComplete;
 
   // 转换 ChatMessage 为 RenderedMessage - 只依赖 messages
   const renderedMessages: RenderedMessage[] = useMemo(() => {
@@ -81,6 +96,7 @@ export const MainChat: React.FC<MainChatProps> = ({
         loading: msg.state === 'sending',
         isSelected: false,
         collaborationContext: msg.collaborationContext,
+        judgeContext: msg.judgeContext,  // 裁判消息上下文
       };
     });
   }, [messages]);
@@ -151,10 +167,11 @@ export const MainChat: React.FC<MainChatProps> = ({
   return (
     <div className="main-chat" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', position: 'relative' }}>
       {activeRoomId && (
-        <CollaborationStatusIndicator 
+        <CollaborationStatusIndicator
           roomId={activeRoomId}
           onCancel={activeSession ? (sessionId) => {
-            cancelSession(sessionId);
+            // 用户中断协作
+            terminateSession(sessionId, 'user_cancel');
           } : undefined}
         />
       )}
@@ -213,12 +230,26 @@ export const MainChat: React.FC<MainChatProps> = ({
           </div>
         </div>
       ) : (
-        <InputArea
-          isConnected={isConnected}
-          onSend={handleSend}
-          participants={participants}
-          // TODO: 从 App 传递 isBusy, isSending 状态
-        />
+        <>
+          {/* 人工裁判决策面板 */}
+          {showHumanJudgePanel && activeSession && (
+            <HumanJudgePanel
+              sessionId={activeSession.sessionId}
+              onContinue={(guidance) => {
+                onHumanJudgeContinue?.(activeSession.sessionId, guidance);
+              }}
+              onComplete={() => {
+                onHumanJudgeComplete?.(activeSession.sessionId);
+              }}
+            />
+          )}
+          <InputArea
+            isConnected={isConnected}
+            onSend={handleSend}
+            participants={participants}
+            // TODO: 从 App 传递 isBusy, isSending 状态
+          />
+        </>
       )}
     </div>
   );

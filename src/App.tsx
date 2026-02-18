@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Sidebar, Header, MainChat } from './components/layout';
 import { ToastComponent, useToast } from './components/ui';
 import { AgentConfigPage } from './components/gateway';
@@ -149,6 +149,7 @@ function App() {
             collaborationContext: collabInfo ? {
               sessionId: collabInfo.sessionId,
               step: collabInfo.step,
+              round: 1,  // 默认第一轮，后续从 session 获取
               participantName: collabInfo.participantName,
               participantColor: collabInfo.participantColor,
             } : undefined,
@@ -217,6 +218,7 @@ function App() {
               collaborationContext: collabInfo ? {
                 sessionId: collabInfo.sessionId,
                 step: collabInfo.step,
+                round: 1,  // 默认第一轮
                 participantName: collabInfo.participantName,
                 participantColor: collabInfo.participantColor,
               } : undefined,
@@ -263,12 +265,36 @@ function App() {
     startCollaboration,
     isCollaborationActive,
     onStepComplete,
+    continueToNextRound,
+    terminateWithReason,
   } = useCollaboration({
     request,
     getStatus,
     connect,
     showToast: showError,
   });
+
+  // 人工裁判：继续下一轮
+  const handleHumanJudgeContinue = useCallback((sessionId: string, guidance?: string) => {
+    console.log('[App] 人工裁判决定继续:', sessionId, guidance ? `指导: ${guidance}` : '');
+
+    // 如果有指导，记录到会话
+    if (guidance) {
+      useCollaborationStore.getState().addHumanJudgeInput(sessionId, {
+        round: useCollaborationStore.getState().getSession(sessionId)?.currentRound || 1,
+        guidance,
+        timestamp: Date.now(),
+      });
+    }
+
+    continueToNextRound(sessionId);
+  }, [continueToNextRound]);
+
+  // 人工裁判：完成协作
+  const handleHumanJudgeComplete = useCallback((sessionId: string) => {
+    console.log('[App] 人工裁判决定完成:', sessionId);
+    terminateWithReason(sessionId, 'user_decided');
+  }, [terminateWithReason]);
 
   // 为每个网关初始化默认房间
   useEffect(() => {
@@ -595,6 +621,8 @@ function App() {
           onDeleteMessage={handleDeleteMessage}
           onDeleteMessages={handleDeleteMessages}
           room={activeRoom}
+          onHumanJudgeContinue={handleHumanJudgeContinue}
+          onHumanJudgeComplete={handleHumanJudgeComplete}
         />
       </div>
     </div>
