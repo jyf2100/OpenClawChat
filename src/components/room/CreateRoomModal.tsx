@@ -148,16 +148,20 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
           padding: '24px',
           minWidth: '400px',
           maxWidth: '500px',
+          maxHeight: '85vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
           border: '1px solid var(--border)',
           boxShadow: '0 8px 16px rgba(0, 0, 0, 0.24)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ margin: '0 0 16px 0', color: 'var(--text-normal)', fontSize: '18px' }}>
+        <h2 style={{ margin: '0 0 16px 0', color: 'var(--text-normal)', fontSize: '18px', flexShrink: 0 }}>
           {isEditMode ? '编辑房间' : '创建房间'}
         </h2>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
           <div>
             <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
               房间名称 <span style={{ color: 'var(--danger)' }}>*</span>
@@ -363,37 +367,38 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
               {description.length}/200
             </div>
           </div>
+        </div>
 
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
-            <button
-              onClick={onClose}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '4px',
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSubmit}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '4px',
-                border: 'none',
-                backgroundColor: 'var(--accent)',
-                color: 'white',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
-              {isEditMode ? '保存' : '创建'}
-            </button>
-          </div>
+        {/* 底部按钮 - 固定在底部 */}
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px', flexShrink: 0, paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '4px',
+              border: 'none',
+              backgroundColor: 'transparent',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSubmit}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '4px',
+              border: 'none',
+              backgroundColor: 'var(--accent)',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
+            {isEditMode ? '保存' : '创建'}
+          </button>
         </div>
       </div>
     </div>
