@@ -397,6 +397,10 @@ function stripLegacyTemplateRole(template: RoleTemplate): RoleTemplate {
   return normalized as RoleTemplate;
 }
 
+function getSessionPreferenceStorage(): StorageAdapter {
+  return new LocalStorageAdapter();
+}
+
 async function isMigrationComplete(key: string): Promise<boolean> {
   return Boolean(await defaultStorage.get<boolean>(key));
 }
@@ -569,6 +573,34 @@ async function migrateArchivesToDbIfNeeded(): Promise<void> {
   await dbBridge.replaceArchives(archives);
   logger.info('Storage', 'migrated archives from legacy store to db', { count: archives.length });
   await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ARCHIVES_MIGRATED);
+}
+
+async function retireLegacyBusinessKeysIfSafe(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+
+  const requirements = [
+    STORAGE_KEYS.DB_PRIMARY_GATEWAYS_MIGRATED,
+    STORAGE_KEYS.DB_PRIMARY_ROOMS_MIGRATED,
+    STORAGE_KEYS.DB_PRIMARY_TEMPLATES_MIGRATED,
+    STORAGE_KEYS.DB_PRIMARY_MESSAGES_MIGRATED,
+    STORAGE_KEYS.DB_PRIMARY_DOCUMENTS_MIGRATED,
+    STORAGE_KEYS.DB_PRIMARY_ARCHIVES_MIGRATED,
+  ];
+
+  const completed = await Promise.all(requirements.map((key) => isMigrationComplete(key)));
+  if (!completed.every(Boolean)) {
+    return;
+  }
+
+  await Promise.all([
+    defaultStorage.remove(STORAGE_KEYS.GATEWAYS),
+    defaultStorage.remove(STORAGE_KEYS.ROOMS),
+    defaultStorage.remove(STORAGE_KEYS.ROLE_TEMPLATES),
+    defaultStorage.remove(STORAGE_KEYS.MESSAGES),
+    defaultStorage.remove(STORAGE_KEYS.DOCUMENTS),
+    defaultStorage.remove(STORAGE_KEYS.ARCHIVED_CONVERSATIONS),
+  ]);
+  logger.info('Storage', 'retired legacy business json keys');
 }
 
 function logReadSource(scope: string, source: 'db' | 'store', count: number): void {
@@ -1003,21 +1035,24 @@ export const roomStorage = {
    * 保存当前会话
    */
   async saveActiveSession(session: string): Promise<void> {
-    await defaultStorage.set(STORAGE_KEYS.ACTIVE_SESSION, session);
+    const adapter = getSessionPreferenceStorage();
+    await adapter.setItem(STORAGE_KEYS.ACTIVE_SESSION, session);
   },
 
   /**
    * 加载当前会话
    */
   async loadActiveSession(): Promise<string | null> {
-    return await defaultStorage.get<string>(STORAGE_KEYS.ACTIVE_SESSION);
+    const adapter = getSessionPreferenceStorage();
+    return adapter.getItem(STORAGE_KEYS.ACTIVE_SESSION);
   },
 
   /**
    * 清除当前会话
    */
   async clearActiveSession(): Promise<void> {
-    await defaultStorage.remove(STORAGE_KEYS.ACTIVE_SESSION);
+    const adapter = getSessionPreferenceStorage();
+    await adapter.removeItem(STORAGE_KEYS.ACTIVE_SESSION);
   },
 };
 
@@ -1105,6 +1140,7 @@ export const documentStorage = {
       await dbBridge.replaceProjectDocuments(projectId, documentsByProject[projectId]);
     }
     await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_DOCUMENTS_MIGRATED);
+    await retireLegacyBusinessKeysIfSafe();
   },
 
   async loadProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
@@ -1139,6 +1175,7 @@ export const archiveStorage = {
 
     await dbBridge.replaceArchives(items);
     await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ARCHIVES_MIGRATED);
+    await retireLegacyBusinessKeysIfSafe();
   },
 
   async addArchive(item: ArchivedConversationSnapshot): Promise<void> {
@@ -1157,6 +1194,7 @@ export const roleTemplateStorage = {
 
     await mirrorTemplatesToDb(normalized);
     await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_TEMPLATES_MIGRATED);
+    await retireLegacyBusinessKeysIfSafe();
   },
 
   async loadTemplates(): Promise<RoleTemplate[]> {
@@ -1252,6 +1290,7 @@ export const messageStorage = {
 
     await dbBridge.importRoomMessages(roomId, messages);
     await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_MESSAGES_MIGRATED);
+    await retireLegacyBusinessKeysIfSafe();
     messageImportScheduler.scheduleRoom(roomId);
   },
 
@@ -1394,6 +1433,7 @@ export async function exportData(): Promise<string> {
     settings: await settingsStorage.loadSettings(),
     messages: await messageStorage.loadAllMessages(),
     documentsByProject: await documentStorage.loadDocumentsByProject(),
+    archives: await archiveStorage.loadArchives(),
     exportedAt: Date.now(),
   };
   return JSON.stringify(data, null, 2);
@@ -1419,10 +1459,16 @@ export async function importData(jsonData: string): Promise<void> {
       await settingsStorage.saveSettings(data.settings);
     }
     if (data.messages) {
-      await defaultStorage.set(STORAGE_KEYS.MESSAGES, data.messages);
+      const messagesByRoom = data.messages as Record<string, Message[]>;
+      for (const [roomId, messages] of Object.entries(messagesByRoom)) {
+        await messageStorage.saveMessages(roomId, messages);
+      }
     }
     if (data.documentsByProject) {
       await documentStorage.saveDocumentsByProject(data.documentsByProject);
+    }
+    if (data.archives) {
+      await archiveStorage.saveArchives(data.archives);
     }
   } catch (error) {
     throw new StorageError('导入数据失败', error as Error);

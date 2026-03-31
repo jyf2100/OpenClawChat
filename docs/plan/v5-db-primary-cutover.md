@@ -60,11 +60,13 @@
 - `messages` 最近一页灰度切读
 - `messages` 主写切换到 DB
 - `documents / archives` DB 主流程
+- `activeSession` 已明确为轻量会话偏好，不进入业务 DB
+- 旧业务 JSON 键已进入退役逻辑：在迁移标记完成后自动清理
+- 导入/导出流程已对齐当前 DB 主路径
 
 ### 未完成
 
-- 旧 JSON 业务键退役
-- `activeSession` 等少量业务边界是否继续留在旧轻存储仍需明确
+- 剩余工作主要是长期统计、告警阈值和进一步观测完善
 
 ## Recommended Cutover Sequence
 
@@ -169,6 +171,14 @@
 
 - 停止写业务数据到 `clawchat.gateways / rooms / messages / roleTemplates / documents / archivedConversations`
 - 只保留 UI 偏好键
+
+#### Status
+
+- 已完成：
+  - 业务主路径已切到 SQLite
+  - 旧业务 JSON 仅作为一次性迁移来源
+  - 迁移标记齐全后会自动清理旧业务 JSON 键
+  - `activeSession` 保留在轻量偏好存储，不属于业务 DB
 
 ## Task Breakdown
 
