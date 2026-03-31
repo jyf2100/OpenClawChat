@@ -68,6 +68,7 @@ pub fn run() {
             db_delete_room,
             db_import_room_messages,
             db_get_room_message_stats,
+            db_get_room_message_samples,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;

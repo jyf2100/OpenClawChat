@@ -11,6 +11,11 @@ impl<'a> MessageRepository<'a> {
     }
 
     pub fn import_room_messages(&self, room_id: &str, messages: &[Value]) -> Result<usize, rusqlite::Error> {
+        self.conn.execute(
+            "DELETE FROM messages WHERE room_id = ?1",
+            rusqlite::params![room_id],
+        )?;
+
         let mut imported = 0usize;
         for message in messages {
             let id = message.get("id").and_then(Value::as_str).unwrap_or("");
@@ -64,6 +69,23 @@ impl<'a> MessageRepository<'a> {
             imported += 1;
         }
         Ok(imported)
+    }
+
+    pub fn get_by_ids(&self, room_id: &str, ids: &[String]) -> Result<Vec<Value>, rusqlite::Error> {
+        let mut items = Vec::new();
+        for id in ids {
+            let mut stmt = self.conn.prepare(
+                "SELECT payload_json FROM messages WHERE room_id = ?1 AND id = ?2 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![room_id, id])?;
+            if let Some(row) = rows.next()? {
+                let payload = row.get::<_, String>(0)?;
+                if let Ok(value) = serde_json::from_str::<Value>(&payload) {
+                    items.push(value);
+                }
+            }
+        }
+        Ok(items)
     }
 
     pub fn count_by_room(&self, room_id: &str) -> Result<i64, rusqlite::Error> {

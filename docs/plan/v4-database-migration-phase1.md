@@ -27,6 +27,9 @@
 - [x] `rooms` 元数据已实现 DB 优先、旧存储回退的灰度切读
 - [x] 轻量实体已增加读取来源日志与数量一致性校验
 - [x] `messages` 已具备后台导入 DB 的批量命令与统计校验能力
+- [x] `messages` 已具备活跃房间优先、分批限流、非阻塞触发的导入调度
+- [x] `messages` 已具备内容级抽样校验
+- [x] `messages` 已具备错误计数与导入状态观测
 - [x] `npm run build` 通过
 - [x] `cd src-tauri && cargo test --lib` 通过
 - [x] `cd src-tauri && cargo check` 通过
@@ -69,6 +72,23 @@
   - 批量导入 command
   - 按房间统计 command
   - 前端 `importMessagesToDbInBackground()` 入口
+- `messages` 调度器已接入：
+  - 活跃房间优先
+  - 每批最多 3 个房间
+  - 每房间最多导入最近 500 条消息
+  - 使用 `setTimeout` 异步调度，避免阻塞当前交互
+- 已增加内容级抽样校验：
+  - 取首条 / 中间 / 末条消息 ID
+  - 导入后从 DB 回读样本，对比 JSON 内容
+- 已增加导入状态观测：
+  - `running`
+  - `pendingRooms`
+  - `activeRoomId`
+  - `importedRooms`
+  - `importedMessages`
+  - `failedRooms`
+  - `sampleMismatches`
+  - `lastError`
 - 仍未切任何消息读路径，启动链路不受影响。
 
 ### 验证
@@ -79,12 +99,12 @@
 
 ### 已知风险
 
-- 一致性校验目前只做“数量级”对比，尚未做内容级抽样校验。
 - `rooms` 已灰度切读，但 `activeSession` 仍走旧存储，后续要明确是否迁入 DB。
 - `messages` 仍完全走旧读路径，后续迁移要继续守住启动性能红线。
-- 消息后台导入框架已具备，但尚未接调度策略和房间优先级。
+- 消息导入状态目前只在内存与日志中可见，尚未接入可视化调试面板。
+- 抽样校验仍是有限样本，不是全量一致性校验。
 
 ### 下一个最小任务
 
-- 为 `messages` 导入增加调度策略（活跃房间优先、分批限流、非阻塞触发）。
-- 增加内容级抽样校验与错误计数指标。
+- 将消息导入状态暴露到调试/设置页，便于人工观测。
+- 在不切主读路径的前提下，增加全量校验工具或按房间校验命令。

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { Room, Message } from "../types";
-import { roomStorage, messageStorage } from "../lib/storage";
+import { getMessageImportStatus, roomStorage, messageStorage, setMessageImportActiveRoom } from "../lib/storage";
+import { logger } from "../lib/logger";
+import { buildRoomId, DEFAULT_SESSION_KEY, getGatewayIdFromRoomId, isDefaultSessionRoom } from "../lib/protocol";
 
 // 内存中保留的最大消息数量
 const MAX_MESSAGES_IN_MEMORY = 500;
@@ -69,8 +71,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       );
 
       if (oldDefaultRooms.length > 0) {
-        console.log('[RoomStore] 发现旧格式房间，开始迁移:', oldDefaultRooms);
-        const targetId = 'default:agent:main:main';
+        logger.info('RoomStore', 'detected legacy room ids, starting migration', { count: oldDefaultRooms.length });
+        const targetId = buildRoomId('default', DEFAULT_SESSION_KEY);
 
         // 确保目标房间存在
         if (!existingRoomIds.has(targetId)) {
@@ -88,7 +90,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         for (const oldRoom of oldDefaultRooms) {
           const oldMessages = allMessages[oldRoom.id] || [];
           if (oldMessages.length > 0) {
-            console.log(`[RoomStore] 迁移消息 ${oldRoom.id} -> ${targetId} (${oldMessages.length}条)`);
+            logger.debug('RoomStore', 'migrating room messages', { from: oldRoom.id, to: targetId, count: oldMessages.length });
             const targetMessages = allMessages[targetId] || [];
             // 合并并去重
             const merged = [...targetMessages, ...oldMessages].sort((a, b) => a.timestamp - b.timestamp);
@@ -119,7 +121,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         let gatewayId = 'default';
 
         if (!roomId.includes(':')) {
-            finalRoomId = `default:${roomId}`;
+            finalRoomId = buildRoomId('default', roomId);
             // 迁移消息
             const msgs = allMessages[roomId];
             if (msgs) {
@@ -129,34 +131,27 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
                 await messageStorage.clearMessages(roomId);
             }
         } else {
-            // 尝试从 ID 解析 gatewayId
-            // 假设格式 gatewayId:sessionKey
-            const parts = roomId.split(':');
-            if (parts.length > 1) {
-                // 简单的启发式：第一个部分作为 gatewayId
-                // 注意：agent:main:main 会被解析为 agent，但这通常是 default 网关
-                if (roomId.startsWith('agent:')) {
-                    // 这是旧格式，归为 default
-                    finalRoomId = `default:${roomId}`;
-                    gatewayId = 'default';
-                    // 迁移...
-                    const msgs = allMessages[roomId];
-                    if (msgs) {
-                        allMessages[finalRoomId] = msgs;
-                        delete allMessages[roomId];
-                        await messageStorage.saveMessages(finalRoomId, msgs);
-                        await messageStorage.clearMessages(roomId);
-                    }
-                } else {
-                    gatewayId = parts[0];
+            const normalizedRoomId = roomId.replace(/^([A-Za-z]+):/, (_, prefix) => `${prefix.toLowerCase()}:`);
+            if (normalizedRoomId.startsWith('agent:')) {
+                finalRoomId = buildRoomId('default', normalizedRoomId);
+                gatewayId = 'default';
+                const msgs = allMessages[roomId];
+                if (msgs) {
+                    allMessages[finalRoomId] = msgs;
+                    delete allMessages[roomId];
+                    await messageStorage.saveMessages(finalRoomId, msgs);
+                    await messageStorage.clearMessages(roomId);
                 }
+            } else {
+                gatewayId = getGatewayIdFromRoomId(normalizedRoomId) || gatewayId;
+                finalRoomId = normalizedRoomId;
             }
         }
 
         migratedRooms.push({
           id: finalRoomId,
           gatewayId: gatewayId,
-          name: finalRoomId.includes('agent:main:main') ? '默认频道' : `会话 ${finalRoomId.slice(0, 8)}`,
+          name: isDefaultSessionRoom(finalRoomId) ? '默认频道' : `会话 ${finalRoomId.slice(0, 8)}`,
           type: 'channel',
           unreadCount: 0,
         });
@@ -166,7 +161,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
 
       if (needsMigration) {
         await roomStorage.saveRooms(migratedRooms);
-        console.log('[RoomStore] 迁移完成，新房间列表:', migratedRooms);
+        logger.info('RoomStore', 'room migration completed', { count: migratedRooms.length });
       }
 
       // 修正 activeSession
@@ -174,9 +169,9 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       // 映射旧 session 到新 ID
       if (activeSession) {
           if (activeSession.startsWith('room:default:') || activeSession === 'agent:main:main') {
-              nextActiveRoomId = 'default:agent:main:main';
+              nextActiveRoomId = buildRoomId('default', DEFAULT_SESSION_KEY);
           } else if (!activeSession.includes(':') && !activeSession.startsWith('default:')) {
-              nextActiveRoomId = `default:${activeSession}`;
+              nextActiveRoomId = buildRoomId('default', activeSession);
           }
       }
 
@@ -217,10 +212,13 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         _initialized: true,
       });
 
-      console.log('[RoomStore] 已加载房间配置:', migratedRooms);
-      console.log('[RoomStore] 已加载消息历史:', Object.keys(roomMessages).length, '个房间');
+      logger.info('RoomStore', 'rooms initialized', {
+        roomCount: migratedRooms.length,
+        messageRoomCount: Object.keys(roomMessages).length,
+        messageImportStatus: getMessageImportStatus(),
+      });
     } catch (error) {
-      console.error('[RoomStore] 初始化失败:', error);
+      logger.error('RoomStore', 'initialization failed', error);
       set({ _initialized: true });
     }
   },
@@ -234,9 +232,9 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
 
     try {
       await roomStorage.saveRoom(room);
-      console.log('[RoomStore] 已保存房间:', room);
+      logger.debug('RoomStore', 'room saved', { roomId: room.id });
     } catch (error) {
-      console.error('[RoomStore] 保存房间失败:', error);
+      logger.error('RoomStore', 'save room failed', error);
     }
   },
 
@@ -254,9 +252,9 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     try {
       await roomStorage.removeRoom(id);
       await messageStorage.clearMessages(id);
-      console.log('[RoomStore] 已删除房间:', id);
+      logger.info('RoomStore', 'room deleted', { roomId: id });
     } catch (error) {
-      console.error('[RoomStore] 删除房间失败:', error);
+      logger.error('RoomStore', 'delete room failed', error);
     }
   },
 
@@ -271,15 +269,16 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       const room = get().rooms.find(r => r.id === id);
       if (room) {
         await roomStorage.saveRoom(room);
-        console.log('[RoomStore] 已更新房间:', id, updates);
+        logger.debug('RoomStore', 'room updated', { roomId: id, updates });
       }
     } catch (error) {
-      console.error('[RoomStore] 更新房间失败:', error);
+      logger.error('RoomStore', 'update room failed', error);
     }
   },
 
   setActiveRoom: async (id) => {
     set({ activeRoomId: id });
+    setMessageImportActiveRoom(id);
 
     try {
       if (id) {
@@ -288,7 +287,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         await roomStorage.clearActiveSession();
       }
     } catch (error) {
-      console.error('[RoomStore] 保存当前会话失败:', error);
+      logger.error('RoomStore', 'save active session failed', error);
     }
   },
 
@@ -298,7 +297,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
 
       // 检查消息是否已存在（去重）
       if (roomMsgs?.byId.has(message.id)) {
-        console.log(`[RoomStore] 消息已存在，跳过添加: ${message.id}`);
+        logger.debug('RoomStore', 'skip duplicate message', { messageId: message.id });
         return state;
       }
 
@@ -332,7 +331,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     try {
       await messageStorage.addMessage(roomId, message);
     } catch (error) {
-      console.error('[RoomStore] 保存消息失败:', error);
+      logger.error('RoomStore', 'save message failed', error);
     }
   },
 
@@ -382,24 +381,20 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     try {
       await messageStorage.updateMessage(roomId, messageId, message);
     } catch (error) {
-      console.error('[RoomStore] 更新消息失败:', error);
+      logger.error('RoomStore', 'update message failed', error);
     }
   },
 
   deleteMessage: async (roomId, messageId) => {
-    console.log(`[RoomStore] 尝试删除消息: room=${roomId}, msg=${messageId}`);
     set((state) => {
       const roomMsgs = state._roomMessages[roomId];
       if (!roomMsgs?.byId.has(messageId)) {
-        console.log(`[RoomStore] 消息不存在: ${messageId}`);
         return state;
       }
 
       const newById = new Map(roomMsgs.byId);
       newById.delete(messageId);
       const newIds = roomMsgs.ids.filter(id => id !== messageId);
-
-      console.log(`[RoomStore] 删除结果: ${roomMsgs.ids.length} -> ${newIds.length}`);
 
       return {
         _roomMessages: {
@@ -416,12 +411,11 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     try {
       await messageStorage.deleteMessage(roomId, messageId);
     } catch (error) {
-      console.error('[RoomStore] 删除消息失败:', error);
+      logger.error('RoomStore', 'delete message failed', error);
     }
   },
 
   deleteMessages: async (roomId, messageIds) => {
-    console.log(`[RoomStore] 尝试批量删除消息: room=${roomId}, count=${messageIds.length}`);
     set((state) => {
       const roomMsgs = state._roomMessages[roomId];
       if (!roomMsgs) return state;
@@ -434,8 +428,6 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       }
 
       const newIds = roomMsgs.ids.filter((id) => !idSet.has(id));
-      console.log(`[RoomStore] 批量删除结果: ${roomMsgs.ids.length} -> ${newIds.length}`);
-
       return {
         _roomMessages: {
           ...state._roomMessages,
@@ -451,7 +443,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     try {
       await messageStorage.deleteMessages(roomId, messageIds);
     } catch (error) {
-      console.error('[RoomStore] 批量删除消息失败:', error);
+      logger.error('RoomStore', 'batch delete messages failed', error);
     }
   },
 
@@ -488,14 +480,14 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     try {
       await messageStorage.clearMessages(roomId);
     } catch (error) {
-      console.error('[RoomStore] 清除消息失败:', error);
+      logger.error('RoomStore', 'clear messages failed', error);
     }
   },
 
   initDefaultRoom: (gatewayId?: string) => {
     // 确保已初始化（防止过早创建空房间导致覆盖旧数据）
     if (!get()._initialized) {
-      console.log('[RoomStore] 等待存储初始化后再检查默认房间...');
+      logger.debug('RoomStore', 'waiting for storage init before default room check');
       // 简单轮询等待
       const checkInit = setInterval(() => {
         if (get()._initialized) {
@@ -510,7 +502,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     const targetGatewayId = gatewayId;
 
     if (!targetGatewayId) {
-      console.error('[roomStore] initDefaultRoom: gatewayId 为空');
+      logger.error('RoomStore', 'initDefaultRoom gatewayId missing');
       return;
     }
 
@@ -518,7 +510,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     const gatewayRooms = state.rooms.filter(r => r.gatewayId === targetGatewayId);
 
     if (gatewayRooms.length === 0) {
-      const defaultRoomId = `${targetGatewayId}:agent:main:main`;
+      const defaultRoomId = buildRoomId(targetGatewayId, DEFAULT_SESSION_KEY);
       const defaultRoom: Room = {
         id: defaultRoomId,
         gatewayId: targetGatewayId,
@@ -535,7 +527,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         get().setActiveRoom(defaultRoom.id);
       }
 
-      console.log('[RoomStore] 已为网关创建默认房间:', targetGatewayId, defaultRoom);
+      logger.info('RoomStore', 'default room created', { gatewayId: targetGatewayId, roomId: defaultRoom.id });
     }
   },
 }));

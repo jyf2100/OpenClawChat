@@ -488,6 +488,188 @@ function logConsistency(scope: string, dbCount: number, storeCount: number): voi
   }
 }
 
+type MessageImportPriority = 'active' | 'normal';
+
+export interface MessageImportStatus {
+  running: boolean;
+  pendingRooms: string[];
+  activeRoomId: string | null;
+  importedRooms: number;
+  importedMessages: number;
+  failedRooms: number;
+  sampleMismatches: number;
+  lastError?: string;
+  lastImportedRoomId?: string;
+  lastRunAt?: number;
+}
+
+class MessageImportScheduler {
+  private queue = new Map<string, MessageImportPriority>();
+  private running = false;
+  private scheduled = false;
+  private activeRoomId: string | null = null;
+  private readonly maxRoomsPerBatch = 3;
+  private readonly maxMessagesPerRoom = 500;
+  private readonly idleDelayMs = 50;
+  private status: MessageImportStatus = {
+    running: false,
+    pendingRooms: [],
+    activeRoomId: null,
+    importedRooms: 0,
+    importedMessages: 0,
+    failedRooms: 0,
+    sampleMismatches: 0,
+  };
+
+  setActiveRoom(roomId: string | null) {
+    this.activeRoomId = roomId;
+    this.status.activeRoomId = roomId;
+    if (roomId && this.queue.has(roomId)) {
+      this.queue.set(roomId, 'active');
+      this.schedule();
+    }
+  }
+
+  scheduleRoom(roomId: string, priority: MessageImportPriority = 'normal') {
+    const nextPriority = priority === 'active' || this.activeRoomId === roomId ? 'active' : 'normal';
+    const currentPriority = this.queue.get(roomId);
+    if (currentPriority !== 'active') {
+      this.queue.set(roomId, nextPriority);
+    }
+    this.status.pendingRooms = [...this.queue.keys()];
+    this.schedule();
+  }
+
+  getStatus(): MessageImportStatus {
+    return {
+      ...this.status,
+      pendingRooms: [...this.queue.keys()],
+    };
+  }
+
+  private schedule() {
+    if (this.running || this.scheduled || !dbBridge.isAvailable()) {
+      return;
+    }
+
+    this.scheduled = true;
+    window.setTimeout(() => {
+      this.scheduled = false;
+      void this.runBatch();
+    }, this.idleDelayMs);
+  }
+
+  private async runBatch() {
+    if (this.running || this.queue.size === 0 || !dbBridge.isAvailable()) {
+      return;
+    }
+
+    this.running = true;
+    this.status.running = true;
+    this.status.pendingRooms = [...this.queue.keys()];
+
+    try {
+      const roomIds = [...this.queue.entries()]
+        .sort((a, b) => {
+          if (a[1] === b[1]) return 0;
+          return a[1] === 'active' ? -1 : 1;
+        })
+        .slice(0, this.maxRoomsPerBatch)
+        .map(([roomId]) => roomId);
+
+      for (const roomId of roomIds) {
+        this.queue.delete(roomId);
+        await this.importRoom(roomId);
+      }
+    } finally {
+      this.running = false;
+      this.status.running = false;
+      this.status.pendingRooms = [...this.queue.keys()];
+      if (this.queue.size > 0) {
+        this.schedule();
+      }
+    }
+  }
+
+  private async importRoom(roomId: string) {
+    try {
+      const messages = await messageStorage.loadMessages(roomId);
+      const limitedMessages = messages.slice(-this.maxMessagesPerRoom);
+      const imported = await dbBridge.importRoomMessages(roomId, limitedMessages);
+      const stats = await dbBridge.getRoomMessageStats(roomId);
+
+      this.status.importedRooms += 1;
+      this.status.importedMessages += imported;
+      this.status.lastImportedRoomId = roomId;
+      this.status.lastRunAt = Date.now();
+
+      logger.info('Storage', 'message import batch finished', {
+        roomId,
+        sourceCount: limitedMessages.length,
+        imported,
+        dbCount: stats.count,
+      });
+
+      if (stats.count !== limitedMessages.length) {
+        this.status.sampleMismatches += 1;
+        logger.warn('Storage', 'message import count mismatch', {
+          roomId,
+          sourceCount: limitedMessages.length,
+          dbCount: stats.count,
+        });
+      }
+
+      await this.verifyRoomSamples(roomId, limitedMessages);
+    } catch (error) {
+      this.status.failedRooms += 1;
+      this.status.lastError = error instanceof Error ? error.message : String(error);
+      logger.error('Storage', 'message import batch failed', { roomId, error });
+    }
+  }
+
+  private async verifyRoomSamples(roomId: string, messages: Message[]) {
+    if (messages.length === 0) return;
+
+    const sampleIds = Array.from(new Set([
+      messages[0]?.id,
+      messages[Math.floor(messages.length / 2)]?.id,
+      messages[messages.length - 1]?.id,
+    ].filter(Boolean) as string[]));
+
+    if (sampleIds.length === 0) return;
+
+    const dbSamples = await dbBridge.getRoomMessageSamples<Message[]>(roomId, sampleIds);
+    const dbById = new Map((dbSamples || []).map((message) => [message.id, message]));
+
+    for (const sampleId of sampleIds) {
+      const source = messages.find((message) => message.id === sampleId);
+      const target = dbById.get(sampleId);
+      if (!source || !target) {
+        this.status.sampleMismatches += 1;
+        logger.warn('Storage', 'message sample missing after import', { roomId, sampleId });
+        continue;
+      }
+
+      const sourceJson = JSON.stringify(source);
+      const targetJson = JSON.stringify(target);
+      if (sourceJson !== targetJson) {
+        this.status.sampleMismatches += 1;
+        logger.warn('Storage', 'message sample content mismatch', { roomId, sampleId });
+      }
+    }
+  }
+}
+
+const messageImportScheduler = new MessageImportScheduler();
+
+export function setMessageImportActiveRoom(roomId: string | null): void {
+  messageImportScheduler.setActiveRoom(roomId);
+}
+
+export function getMessageImportStatus(): MessageImportStatus {
+  return messageImportScheduler.getStatus();
+}
+
 export async function importMessagesToDbInBackground(roomIds?: string[]): Promise<void> {
   if (!dbBridge.isAvailable()) {
     return;
@@ -899,6 +1081,7 @@ export const messageStorage = {
    */
   async saveMessages(roomId: string, messages: Message[]): Promise<void> {
     batchedStorage.addToBatch(roomId, messages);
+    messageImportScheduler.scheduleRoom(roomId);
   },
 
   /**
@@ -979,6 +1162,7 @@ export const messageStorage = {
     const allMessages = await this.loadAllMessages();
     delete allMessages[roomId];
     await defaultStorage.set(STORAGE_KEYS.MESSAGES, allMessages);
+    messageImportScheduler.scheduleRoom(roomId);
   },
 
   /**

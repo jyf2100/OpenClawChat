@@ -130,3 +130,14 @@ pub fn db_get_room_message_stats(app: AppHandle, room_id: String) -> Result<Valu
         "latestTimestamp": latest_timestamp,
     }))
 }
+
+#[tauri::command]
+pub fn db_get_room_message_samples(
+    app: AppHandle,
+    room_id: String,
+    ids: Vec<String>,
+) -> Result<Vec<Value>, String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.get_by_ids(&room_id, &ids).map_err(|err| err.to_string())
+}

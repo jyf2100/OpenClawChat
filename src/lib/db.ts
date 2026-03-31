@@ -75,6 +75,10 @@ export const dbBridge = {
   ): Promise<T> {
     return invokeDb<T>('db_get_room_message_stats', { roomId });
   },
+
+  async getRoomMessageSamples<T = any[]>(roomId: string, ids: string[]): Promise<T> {
+    return invokeDb<T>('db_get_room_message_samples', { roomId, ids });
+  },
 };
 
 export async function runDbMirror(label: string, task: () => Promise<void>): Promise<void> {
