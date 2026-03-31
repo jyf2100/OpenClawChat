@@ -89,6 +89,27 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_messages_room_timestamp
           ON messages(room_id, timestamp DESC);
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_documents_project_updated
+          ON documents(project_id, updated_at DESC);
+        CREATE TABLE IF NOT EXISTS archives (
+          id TEXT PRIMARY KEY,
+          room_id TEXT,
+          gateway_id TEXT,
+          session_key TEXT,
+          room_name TEXT,
+          summary TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          archived_at INTEGER NOT NULL
+        );
         ",
     )?;
 

@@ -30,6 +30,9 @@ const STORAGE_KEYS = {
   DB_PRIMARY_GATEWAYS_MIGRATED: 'clawchat.dbPrimary.gateways.v1',
   DB_PRIMARY_ROOMS_MIGRATED: 'clawchat.dbPrimary.rooms.v1',
   DB_PRIMARY_TEMPLATES_MIGRATED: 'clawchat.dbPrimary.templates.v1',
+  DB_PRIMARY_MESSAGES_MIGRATED: 'clawchat.dbPrimary.messages.v1',
+  DB_PRIMARY_DOCUMENTS_MIGRATED: 'clawchat.dbPrimary.documents.v1',
+  DB_PRIMARY_ARCHIVES_MIGRATED: 'clawchat.dbPrimary.archives.v1',
 } as const;
 
 export interface ArchivedConversationSnapshot {
@@ -531,6 +534,41 @@ async function migrateTemplatesToDbIfNeeded(): Promise<void> {
     logger.info('Storage', 'migrated templates from legacy store to db', { count: storeTemplates.length });
   }
   await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_TEMPLATES_MIGRATED);
+}
+
+async function migrateMessagesToDbIfNeeded(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+  if (await isMigrationComplete(STORAGE_KEYS.DB_PRIMARY_MESSAGES_MIGRATED)) return;
+
+  const allMessages = await defaultStorage.get<Record<string, Message[]>>(STORAGE_KEYS.MESSAGES) || {};
+  for (const [roomId, messages] of Object.entries(allMessages)) {
+    if (!messages || messages.length === 0) continue;
+    await dbBridge.importRoomMessages(roomId, messages);
+  }
+  logger.info('Storage', 'migrated messages from legacy store to db', { roomCount: Object.keys(allMessages).length });
+  await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_MESSAGES_MIGRATED);
+}
+
+async function migrateDocumentsToDbIfNeeded(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+  if (await isMigrationComplete(STORAGE_KEYS.DB_PRIMARY_DOCUMENTS_MIGRATED)) return;
+
+  const documentsByProject = await defaultStorage.get<Record<string, ProjectDocument[]>>(STORAGE_KEYS.DOCUMENTS) || {};
+  for (const [projectId, docs] of Object.entries(documentsByProject)) {
+    await dbBridge.replaceProjectDocuments(projectId, docs);
+  }
+  logger.info('Storage', 'migrated documents from legacy store to db', { projectCount: Object.keys(documentsByProject).length });
+  await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_DOCUMENTS_MIGRATED);
+}
+
+async function migrateArchivesToDbIfNeeded(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+  if (await isMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ARCHIVES_MIGRATED)) return;
+
+  const archives = await defaultStorage.get<ArchivedConversationSnapshot[]>(STORAGE_KEYS.ARCHIVED_CONVERSATIONS) || [];
+  await dbBridge.replaceArchives(archives);
+  logger.info('Storage', 'migrated archives from legacy store to db', { count: archives.length });
+  await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ARCHIVES_MIGRATED);
 }
 
 function logReadSource(scope: string, source: 'db' | 'store', count: number): void {
@@ -1035,12 +1073,38 @@ export const settingsStorage = {
  */
 export const documentStorage = {
   async loadDocumentsByProject(): Promise<Record<string, ProjectDocument[]>> {
-    const result = await defaultStorage.get<Record<string, ProjectDocument[]>>(STORAGE_KEYS.DOCUMENTS);
-    return result || {};
+    if (!dbBridge.isAvailable()) {
+      const result = await defaultStorage.get<Record<string, ProjectDocument[]>>(STORAGE_KEYS.DOCUMENTS);
+      return result || {};
+    }
+
+    await migrateDocumentsToDbIfNeeded();
+    const documents = await dbBridge.listDocuments<ProjectDocument[]>();
+    const grouped: Record<string, ProjectDocument[]> = {};
+    for (const doc of documents || []) {
+      if (!grouped[doc.projectId]) grouped[doc.projectId] = [];
+      grouped[doc.projectId].push(doc);
+    }
+    return grouped;
   },
 
   async saveDocumentsByProject(documentsByProject: Record<string, ProjectDocument[]>): Promise<void> {
-    await defaultStorage.set(STORAGE_KEYS.DOCUMENTS, documentsByProject);
+    if (!dbBridge.isAvailable()) {
+      await defaultStorage.set(STORAGE_KEYS.DOCUMENTS, documentsByProject);
+      return;
+    }
+
+    const projects = Object.keys(documentsByProject);
+    const existing = await this.loadDocumentsByProject();
+    for (const projectId of Object.keys(existing)) {
+      if (!(projectId in documentsByProject)) {
+        await dbBridge.replaceProjectDocuments(projectId, []);
+      }
+    }
+    for (const projectId of projects) {
+      await dbBridge.replaceProjectDocuments(projectId, documentsByProject[projectId]);
+    }
+    await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_DOCUMENTS_MIGRATED);
   },
 
   async loadProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
@@ -1057,12 +1121,24 @@ export const documentStorage = {
 
 export const archiveStorage = {
   async loadArchives(): Promise<ArchivedConversationSnapshot[]> {
-    const result = await defaultStorage.get<ArchivedConversationSnapshot[]>(STORAGE_KEYS.ARCHIVED_CONVERSATIONS);
+    if (!dbBridge.isAvailable()) {
+      const result = await defaultStorage.get<ArchivedConversationSnapshot[]>(STORAGE_KEYS.ARCHIVED_CONVERSATIONS);
+      return result || [];
+    }
+
+    await migrateArchivesToDbIfNeeded();
+    const result = await dbBridge.listArchives<ArchivedConversationSnapshot[]>();
     return result || [];
   },
 
   async saveArchives(items: ArchivedConversationSnapshot[]): Promise<void> {
-    await defaultStorage.set(STORAGE_KEYS.ARCHIVED_CONVERSATIONS, items);
+    if (!dbBridge.isAvailable()) {
+      await defaultStorage.set(STORAGE_KEYS.ARCHIVED_CONVERSATIONS, items);
+      return;
+    }
+
+    await dbBridge.replaceArchives(items);
+    await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ARCHIVES_MIGRATED);
   },
 
   async addArchive(item: ArchivedConversationSnapshot): Promise<void> {
@@ -1169,7 +1245,13 @@ export const messageStorage = {
    * 保存消息（按房间分组）- 使用批量写入
    */
   async saveMessages(roomId: string, messages: Message[]): Promise<void> {
-    batchedStorage.addToBatch(roomId, messages);
+    if (!dbBridge.isAvailable()) {
+      batchedStorage.addToBatch(roomId, messages);
+      return;
+    }
+
+    await dbBridge.importRoomMessages(roomId, messages);
+    await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_MESSAGES_MIGRATED);
     messageImportScheduler.scheduleRoom(roomId);
   },
 
@@ -1184,8 +1266,20 @@ export const messageStorage = {
    * 加载所有消息
    */
   async loadAllMessages(): Promise<Record<string, Message[]>> {
-    const result = await defaultStorage.get<Record<string, Message[]>>(STORAGE_KEYS.MESSAGES);
-    return result || {};
+    if (!dbBridge.isAvailable()) {
+      const result = await defaultStorage.get<Record<string, Message[]>>(STORAGE_KEYS.MESSAGES);
+      return result || {};
+    }
+
+    await migrateMessagesToDbIfNeeded();
+    const dbMessages = await dbBridge.listAllMessages<Message[]>();
+    const grouped: Record<string, Message[]> = {};
+    for (const message of dbMessages || []) {
+      if (!message.roomId) continue;
+      if (!grouped[message.roomId]) grouped[message.roomId] = [];
+      grouped[message.roomId].push(message);
+    }
+    return grouped;
   },
 
   /**
@@ -1225,32 +1319,48 @@ export const messageStorage = {
    * 删除单条消息
    */
   async deleteMessage(roomId: string, messageId: string): Promise<void> {
-    const messages = await this.loadMessages(roomId);
-    const newMessages = messages.filter(m => m.id !== messageId);
-    if (newMessages.length !== messages.length) {
-      await this.saveMessages(roomId, newMessages);
+    if (!dbBridge.isAvailable()) {
+      const messages = await this.loadMessages(roomId);
+      const newMessages = messages.filter(m => m.id !== messageId);
+      if (newMessages.length !== messages.length) {
+        await this.saveMessages(roomId, newMessages);
+      }
+      return;
     }
+
+    await dbBridge.deleteMessage(roomId, messageId);
   },
 
   /**
    * 批量删除消息
    */
   async deleteMessages(roomId: string, messageIds: string[]): Promise<void> {
-    const messages = await this.loadMessages(roomId);
-    const idSet = new Set(messageIds);
-    const newMessages = messages.filter(m => !idSet.has(m.id));
-    if (newMessages.length !== messages.length) {
-      await this.saveMessages(roomId, newMessages);
+    if (!dbBridge.isAvailable()) {
+      const messages = await this.loadMessages(roomId);
+      const idSet = new Set(messageIds);
+      const newMessages = messages.filter(m => !idSet.has(m.id));
+      if (newMessages.length !== messages.length) {
+        await this.saveMessages(roomId, newMessages);
+      }
+      return;
     }
+
+    await dbBridge.deleteMessages(roomId, messageIds);
   },
 
   /**
    * 清除房间消息
    */
   async clearMessages(roomId: string): Promise<void> {
-    const allMessages = await this.loadAllMessages();
-    delete allMessages[roomId];
-    await defaultStorage.set(STORAGE_KEYS.MESSAGES, allMessages);
+    if (!dbBridge.isAvailable()) {
+      const allMessages = await this.loadAllMessages();
+      delete allMessages[roomId];
+      await defaultStorage.set(STORAGE_KEYS.MESSAGES, allMessages);
+      messageImportScheduler.scheduleRoom(roomId);
+      return;
+    }
+
+    await dbBridge.clearRoomMessages(roomId);
     messageImportScheduler.scheduleRoom(roomId);
   },
 

@@ -98,6 +98,42 @@ export const dbBridge = {
   ): Promise<T> {
     return invokeDb<T>('db_list_recent_room_messages', { roomId, limit, offset });
   },
+
+  async listAllMessages<T = any[]>(): Promise<T> {
+    return invokeDb<T>('db_list_all_messages');
+  },
+
+  async upsertMessage(roomId: string, payload: unknown): Promise<number> {
+    return invokeDb<number>('db_upsert_message', { roomId, payload });
+  },
+
+  async deleteMessage(roomId: string, messageId: string): Promise<void> {
+    await invokeDb('db_delete_message', { roomId, messageId });
+  },
+
+  async deleteMessages(roomId: string, messageIds: string[]): Promise<void> {
+    await invokeDb('db_delete_messages', { roomId, messageIds });
+  },
+
+  async clearRoomMessages(roomId: string): Promise<void> {
+    await invokeDb('db_clear_room_messages', { roomId });
+  },
+
+  async listDocuments<T = any[]>(): Promise<T> {
+    return invokeDb<T>('db_list_documents');
+  },
+
+  async replaceProjectDocuments(projectId: string, documents: unknown[]): Promise<void> {
+    await invokeDb('db_replace_project_documents', { projectId, documents });
+  },
+
+  async listArchives<T = any[]>(): Promise<T> {
+    return invokeDb<T>('db_list_archives');
+  },
+
+  async replaceArchives(archives: unknown[]): Promise<void> {
+    await invokeDb('db_replace_archives', { archives });
+  },
 };
 
 export async function runDbMirror(label: string, task: () => Promise<void>): Promise<void> {

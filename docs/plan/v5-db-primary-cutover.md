@@ -56,15 +56,15 @@
 - `messages` 导入调度
 - `messages` 抽样校验 + 全量校验命令
 - 设置页导入状态观测
+- `templates / gateways / rooms` DB 主路径切换
+- `messages` 最近一页灰度切读
+- `messages` 主写切换到 DB
+- `documents / archives` DB 主流程
 
 ### 未完成
 
-- 轻量实体停止写旧存储
-- 轻量实体停止读旧存储
-- `messages` 最近一页灰度切读
-- `messages` 主写路径切换
-- `documents / archives` DB 化
 - 旧 JSON 业务键退役
+- `activeSession` 等少量业务边界是否继续留在旧轻存储仍需明确
 
 ## Recommended Cutover Sequence
 
@@ -155,6 +155,14 @@
 
 - `documents / archives` 双写 → 切读 → 主路径切换
 
+#### Status
+
+- 已完成：
+  - `documents / archives` 已具备 DB 表、repository、commands
+  - `documentStorage / archiveStorage` 已在 Tauri 中切到 DB 主路径
+- 未完成：
+  - 旧 JSON 键仍保留作为历史迁移来源
+
 ### Phase E: 退役旧业务 JSON
 
 目标：
@@ -188,8 +196,8 @@
   - 旧 store 仅作为一次性迁移来源
   - 引入迁移完成标记，避免删空 DB 后再次把旧脏数据导回
 - 未完成：
-  - `documents / archives` 仍未纳入 DB 主路径
-  - `messages` 仍未切主读写
+  - `documents / archives` 旧 JSON 键尚未彻底清理
+  - `activeSession` 是否迁 DB 还未决
 
 ### Task 2: 最近一页消息灰度切读
 
@@ -246,5 +254,5 @@
 
 ## Current Recommendation
 
-下一步先做 **Task 1: 轻量实体 DB 主路径切换**。  
-不要先切消息读路径。先把轻量实体彻底收干净，再动消息。
+下一步先做 **Task 5: 退役旧业务 JSON 键**。  
+同时明确 `activeSession` 是否继续留在轻量存储；如果保留，就把它正式定义为 UI/会话偏好而非业务主存储。

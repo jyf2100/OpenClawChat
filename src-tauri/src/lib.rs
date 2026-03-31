@@ -114,6 +114,15 @@ pub fn run() {
             db_get_room_message_samples,
             db_validate_room_messages,
             db_list_recent_room_messages,
+            db_list_all_messages,
+            db_upsert_message,
+            db_delete_message,
+            db_delete_messages,
+            db_clear_room_messages,
+            db_list_documents,
+            db_replace_project_documents,
+            db_list_archives,
+            db_replace_archives,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;

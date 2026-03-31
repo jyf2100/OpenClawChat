@@ -123,6 +123,39 @@ impl<'a> MessageRepository<'a> {
         Ok(items)
     }
 
+    pub fn list_all(&self) -> Result<Vec<Value>, rusqlite::Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT payload_json FROM messages ORDER BY timestamp ASC")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut items = Vec::new();
+        for row in rows {
+            let payload = row?;
+            if let Ok(value) = serde_json::from_str::<Value>(&payload) {
+                items.push(value);
+            }
+        }
+        Ok(items)
+    }
+
+    pub fn delete_by_ids(&self, room_id: &str, ids: &[String]) -> Result<(), rusqlite::Error> {
+        for id in ids {
+            self.conn.execute(
+                "DELETE FROM messages WHERE room_id = ?1 AND id = ?2",
+                rusqlite::params![room_id, id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_room(&self, room_id: &str) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "DELETE FROM messages WHERE room_id = ?1",
+            rusqlite::params![room_id],
+        )?;
+        Ok(())
+    }
+
     pub fn count_by_room(&self, room_id: &str) -> Result<i64, rusqlite::Error> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM messages WHERE room_id = ?1",

@@ -1,4 +1,4 @@
-use crate::db::{repositories::{agent_configs::AgentConfigRepository, gateways::GatewayRepository, messages::MessageRepository, rooms::RoomRepository, templates::TemplateRepository}, Database};
+use crate::db::{repositories::{agent_configs::AgentConfigRepository, archives::ArchiveRepository, documents::DocumentRepository, gateways::GatewayRepository, messages::MessageRepository, rooms::RoomRepository, templates::TemplateRepository}, Database};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
@@ -167,4 +167,67 @@ pub fn db_list_recent_room_messages(
     let repo = MessageRepository::new(db.connection());
     repo.list_recent_by_room(&room_id, limit, offset)
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_list_all_messages(app: AppHandle) -> Result<Vec<Value>, String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.list_all().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_upsert_message(app: AppHandle, room_id: String, payload: Value) -> Result<usize, String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.import_room_messages(&room_id, &[payload]).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_delete_message(app: AppHandle, room_id: String, message_id: String) -> Result<(), String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.delete_by_ids(&room_id, &[message_id]).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_delete_messages(app: AppHandle, room_id: String, message_ids: Vec<String>) -> Result<(), String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.delete_by_ids(&room_id, &message_ids).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_clear_room_messages(app: AppHandle, room_id: String) -> Result<(), String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.clear_room(&room_id).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_list_documents(app: AppHandle) -> Result<Vec<Value>, String> {
+    let db = open_database(&app)?;
+    let repo = DocumentRepository::new(db.connection());
+    repo.list_all().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_replace_project_documents(app: AppHandle, project_id: String, documents: Vec<Value>) -> Result<(), String> {
+    let db = open_database(&app)?;
+    let repo = DocumentRepository::new(db.connection());
+    repo.replace_project(&project_id, &documents).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_list_archives(app: AppHandle) -> Result<Vec<Value>, String> {
+    let db = open_database(&app)?;
+    let repo = ArchiveRepository::new(db.connection());
+    repo.list_all().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn db_replace_archives(app: AppHandle, archives: Vec<Value>) -> Result<(), String> {
+    let db = open_database(&app)?;
+    let repo = ArchiveRepository::new(db.connection());
+    repo.replace_all(&archives).map_err(|err| err.to_string())
 }
