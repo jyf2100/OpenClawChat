@@ -65,6 +65,16 @@ export const dbBridge = {
   async deleteRoom(id: string): Promise<void> {
     await invokeDb('db_delete_room', { id });
   },
+
+  async importRoomMessages(roomId: string, messages: unknown[]): Promise<number> {
+    return invokeDb<number>('db_import_room_messages', { roomId, messages });
+  },
+
+  async getRoomMessageStats<T = { roomId: string; count: number; latestTimestamp?: number | null }>(
+    roomId: string,
+  ): Promise<T> {
+    return invokeDb<T>('db_get_room_message_stats', { roomId });
+  },
 };
 
 export async function runDbMirror(label: string, task: () => Promise<void>): Promise<void> {

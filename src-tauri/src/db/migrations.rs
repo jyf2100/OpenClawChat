@@ -72,6 +72,23 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
         );
+        CREATE TABLE IF NOT EXISTS messages (
+          id TEXT PRIMARY KEY,
+          room_id TEXT NOT NULL,
+          gateway_id TEXT,
+          type TEXT,
+          role TEXT,
+          content_json TEXT NOT NULL,
+          text_preview TEXT,
+          sender TEXT,
+          timestamp INTEGER NOT NULL,
+          metadata_json TEXT,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_room_timestamp
+          ON messages(room_id, timestamp DESC);
         ",
     )?;
 

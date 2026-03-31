@@ -488,6 +488,41 @@ function logConsistency(scope: string, dbCount: number, storeCount: number): voi
   }
 }
 
+export async function importMessagesToDbInBackground(roomIds?: string[]): Promise<void> {
+  if (!dbBridge.isAvailable()) {
+    return;
+  }
+
+  const allMessages = await messageStorage.loadAllMessages();
+  const targetRoomIds = roomIds && roomIds.length > 0 ? roomIds : Object.keys(allMessages);
+
+  for (const roomId of targetRoomIds) {
+    const messages = allMessages[roomId] || [];
+    if (messages.length === 0) {
+      continue;
+    }
+
+    await runDbMirror('importRoomMessages', async () => {
+      const imported = await dbBridge.importRoomMessages(roomId, messages);
+      const stats = await dbBridge.getRoomMessageStats(roomId);
+      logger.info('Storage', 'room messages imported to db', {
+        roomId,
+        sourceCount: messages.length,
+        imported,
+        dbCount: stats.count,
+        dbLatestTimestamp: stats.latestTimestamp,
+      });
+      if (stats.count !== messages.length) {
+        logger.warn('Storage', 'room message count mismatch after import', {
+          roomId,
+          sourceCount: messages.length,
+          dbCount: stats.count,
+        });
+      }
+    });
+  }
+}
+
 /**
  * 网关存储操作
  */

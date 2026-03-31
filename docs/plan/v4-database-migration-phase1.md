@@ -2,7 +2,7 @@
 
 ## Goal
 
-- 为 `templates / gateways / agent_configs` 建立 SQLite 双写兼容层，不切换主读路径。
+- 为轻量实体建立 SQLite 双写/灰度切读兼容层，并补齐 `messages` 的后台导入框架，不切换消息主读路径。
 
 ## Scope
 
@@ -10,9 +10,10 @@
   - Rust DB 删除命令
   - 前端 `db.ts`
   - `storage.ts` 双写网关、模板、Agent 配置
+  - `rooms` 元数据双写与灰度切读
+  - `messages` 后台导入框架与统计校验基础设施
 - 不做：
   - `messages` 读路径迁移
-  - `rooms` 读路径迁移
   - 全量数据库切读
 
 ## Acceptance
@@ -25,6 +26,7 @@
 - [x] `gateways / agent_configs` 已实现 DB 优先、旧存储回退的读取 facade
 - [x] `rooms` 元数据已实现 DB 优先、旧存储回退的灰度切读
 - [x] 轻量实体已增加读取来源日志与数量一致性校验
+- [x] `messages` 已具备后台导入 DB 的批量命令与统计校验能力
 - [x] `npm run build` 通过
 - [x] `cd src-tauri && cargo test --lib` 通过
 - [x] `cd src-tauri && cargo check` 通过
@@ -62,6 +64,12 @@
   - `gateways / agent_configs`: DB 优先，旧存储回退
   - `rooms`: DB 优先，旧存储回退（仅房间元数据，消息仍未迁移）
 - 轻量实体已增加读取来源日志与数量一致性校验，便于后续灰度观察。
+- `messages` 已新增后台导入框架：
+  - Rust 侧 `messages` 表与索引
+  - 批量导入 command
+  - 按房间统计 command
+  - 前端 `importMessagesToDbInBackground()` 入口
+- 仍未切任何消息读路径，启动链路不受影响。
 
 ### 验证
 
@@ -73,9 +81,10 @@
 
 - 一致性校验目前只做“数量级”对比，尚未做内容级抽样校验。
 - `rooms` 已灰度切读，但 `activeSession` 仍走旧存储，后续要明确是否迁入 DB。
-- `messages` 仍完全走旧路径，后续迁移要继续守住启动性能红线。
+- `messages` 仍完全走旧读路径，后续迁移要继续守住启动性能红线。
+- 消息后台导入框架已具备，但尚未接调度策略和房间优先级。
 
 ### 下一个最小任务
 
-- 为轻量实体增加内容级抽样校验与错误计数指标。
-- 设计并实现 `messages` 的后台导入框架，但仍不切消息读路径。
+- 为 `messages` 导入增加调度策略（活跃房间优先、分批限流、非阻塞触发）。
+- 增加内容级抽样校验与错误计数指标。
