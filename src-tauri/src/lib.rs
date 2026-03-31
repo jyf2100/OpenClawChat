@@ -5,7 +5,7 @@ mod protocol;
 mod state;
 
 use commands::*;
-use db::ensure_app_database;
+use db::DatabaseManager;
 use state::{ConnectionState, ConnectionManager};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -13,14 +13,14 @@ use tauri::Manager;
 
 #[cfg(test)]
 mod tests {
-    use super::db::{repositories::messages::MessageRepository, Database};
+    use super::db::{repositories::messages::MessageRepository, schema::LATEST_SCHEMA_VERSION, Database};
     use serde_json::json;
 
     #[test]
     fn initializes_schema_migrations_table() {
         let db = Database::open_in_memory().expect("open in-memory db");
         let version = db.schema_version().expect("read schema version");
-        assert_eq!(version, 1);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
     }
 
     #[test]
@@ -134,8 +134,9 @@ pub fn run() {
                 println!("Created App Data Dir");
             }
 
-            let db_path = ensure_app_database(&app_data_dir)?;
-            println!("Database Path: {:?}", db_path);
+            let db_manager = DatabaseManager::initialize(&app_data_dir)?;
+            println!("Database Path: {:?}", db_manager.db_path());
+            app.manage(db_manager);
 
             let connection_state = app.state::<ConnectionState>();
             let manager = Arc::new(RwLock::new(ConnectionManager::new(connection_state.pool())));
