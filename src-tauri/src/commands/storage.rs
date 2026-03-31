@@ -1,4 +1,4 @@
-use crate::db::{repositories::{agent_configs::AgentConfigRepository, archives::ArchiveRepository, documents::DocumentRepository, gateways::GatewayRepository, messages::MessageRepository, rooms::RoomRepository, templates::TemplateRepository}, DatabaseManager};
+use crate::db::{repositories::{agent_configs::AgentConfigRepository, archives::ArchiveRepository, auth::AuthRepository, documents::DocumentRepository, gateways::GatewayRepository, messages::MessageRepository, rooms::RoomRepository, templates::TemplateRepository}, DatabaseManager};
 use serde_json::Value;
 use tauri::State;
 
@@ -228,4 +228,42 @@ pub fn db_replace_archives(db: State<'_, DatabaseManager>, archives: Vec<Value>)
     let conn = open_database(&db)?;
     let repo = ArchiveRepository::new(&conn);
     repo.replace_all(&archives).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn auth_get_status(db: State<'_, DatabaseManager>, session_token: Option<String>) -> Result<Value, String> {
+    let conn = open_database(&db)?;
+    let repo = AuthRepository::new(&conn);
+    let status = repo.auth_status(session_token.as_deref()).map_err(|err| err.to_string())?;
+    serde_json::to_value(status).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn auth_register(
+    db: State<'_, DatabaseManager>,
+    email: String,
+    display_name: String,
+    password: String,
+) -> Result<String, String> {
+    let conn = open_database(&db)?;
+    let repo = AuthRepository::new(&conn);
+    repo.register(&email, &display_name, &password)
+}
+
+#[tauri::command]
+pub fn auth_login(
+    db: State<'_, DatabaseManager>,
+    email: String,
+    password: String,
+) -> Result<String, String> {
+    let conn = open_database(&db)?;
+    let repo = AuthRepository::new(&conn);
+    repo.login(&email, &password)
+}
+
+#[tauri::command]
+pub fn auth_logout(db: State<'_, DatabaseManager>, session_token: String) -> Result<(), String> {
+    let conn = open_database(&db)?;
+    let repo = AuthRepository::new(&conn);
+    repo.logout(&session_token).map_err(|err| err.to_string())
 }

@@ -159,6 +159,25 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
               ON archives(archived_at DESC);
             ",
         ),
+        4 => conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS local_users (
+              id TEXT PRIMARY KEY,
+              email TEXT NOT NULL UNIQUE,
+              display_name TEXT NOT NULL,
+              password_hash TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+              session_token TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id
+              ON auth_sessions(user_id);
+            ",
+        ),
         _ => Ok(()),
     }
 }

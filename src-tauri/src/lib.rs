@@ -31,6 +31,8 @@ mod tests {
         assert!(db.table_exists("agent_configs").expect("agent_configs table exists"));
         assert!(db.table_exists("rooms").expect("rooms table exists"));
         assert!(db.table_exists("messages").expect("messages table exists"));
+        assert!(db.table_exists("local_users").expect("local_users table exists"));
+        assert!(db.table_exists("auth_sessions").expect("auth_sessions table exists"));
     }
 
     #[test]
@@ -123,6 +125,10 @@ pub fn run() {
             db_replace_project_documents,
             db_list_archives,
             db_replace_archives,
+            auth_get_status,
+            auth_register,
+            auth_login,
+            auth_logout,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
