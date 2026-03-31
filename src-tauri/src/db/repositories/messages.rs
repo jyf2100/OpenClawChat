@@ -1,5 +1,16 @@
 use rusqlite::Connection;
+use serde::Serialize;
 use serde_json::Value;
+
+#[derive(Debug, Serialize)]
+pub struct MessageValidationReport {
+    pub room_id: String,
+    pub expected_count: usize,
+    pub db_count: usize,
+    pub missing_ids: Vec<String>,
+    pub extra_ids: Vec<String>,
+    pub mismatched_ids: Vec<String>,
+}
 
 pub struct MessageRepository<'a> {
     conn: &'a Connection,
@@ -102,5 +113,57 @@ impl<'a> MessageRepository<'a> {
             rusqlite::params![room_id],
             |row| row.get(0),
         )
+    }
+
+    pub fn validate_room_messages(
+        &self,
+        room_id: &str,
+        expected_messages: &[Value],
+    ) -> Result<MessageValidationReport, rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT id, payload_json FROM messages WHERE room_id = ?1")?;
+        let rows = stmt.query_map(rusqlite::params![room_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut db_map = std::collections::BTreeMap::new();
+        for row in rows {
+            let (id, payload_json) = row?;
+            db_map.insert(id, payload_json);
+        }
+
+        let mut expected_map = std::collections::BTreeMap::new();
+        for message in expected_messages {
+          if let Some(id) = message.get("id").and_then(Value::as_str) {
+            expected_map.insert(
+              id.to_string(),
+              serde_json::to_string(message).unwrap_or_else(|_| "{}".to_string()),
+            );
+          }
+        }
+
+        let mut missing_ids = Vec::new();
+        let mut mismatched_ids = Vec::new();
+        for (id, payload_json) in &expected_map {
+            match db_map.get(id) {
+                None => missing_ids.push(id.clone()),
+                Some(db_payload) if db_payload != payload_json => mismatched_ids.push(id.clone()),
+                _ => {}
+            }
+        }
+
+        let extra_ids = db_map
+            .keys()
+            .filter(|id| !expected_map.contains_key(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        Ok(MessageValidationReport {
+            room_id: room_id.to_string(),
+            expected_count: expected_map.len(),
+            db_count: db_map.len(),
+            missing_ids,
+            extra_ids,
+            mismatched_ids,
+        })
     }
 }

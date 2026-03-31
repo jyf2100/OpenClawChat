@@ -13,7 +13,8 @@ use tauri::Manager;
 
 #[cfg(test)]
 mod tests {
-    use super::db::Database;
+    use super::db::{repositories::messages::MessageRepository, Database};
+    use serde_json::json;
 
     #[test]
     fn initializes_schema_migrations_table() {
@@ -30,6 +31,27 @@ mod tests {
         assert!(db.table_exists("agent_configs").expect("agent_configs table exists"));
         assert!(db.table_exists("rooms").expect("rooms table exists"));
         assert!(db.table_exists("messages").expect("messages table exists"));
+    }
+
+    #[test]
+    fn validates_room_messages_against_database_payloads() {
+        let db = Database::open_in_memory().expect("open in-memory db");
+        let repo = MessageRepository::new(db.connection());
+        let room_id = "room-1";
+        let source = vec![
+            json!({"id":"m1","roomId":room_id,"content":"hello","timestamp":1}),
+            json!({"id":"m2","roomId":room_id,"content":"world","timestamp":2}),
+        ];
+        repo.import_room_messages(room_id, &source).expect("import");
+
+        let report = repo
+            .validate_room_messages(room_id, &source)
+            .expect("validate report");
+
+        assert_eq!(report.expected_count, 2);
+        assert_eq!(report.db_count, 2);
+        assert!(report.missing_ids.is_empty());
+        assert!(report.mismatched_ids.is_empty());
     }
 }
 
@@ -69,6 +91,7 @@ pub fn run() {
             db_import_room_messages,
             db_get_room_message_stats,
             db_get_room_message_samples,
+            db_validate_room_messages,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;

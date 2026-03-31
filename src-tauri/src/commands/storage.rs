@@ -141,3 +141,17 @@ pub fn db_get_room_message_samples(
     let repo = MessageRepository::new(db.connection());
     repo.get_by_ids(&room_id, &ids).map_err(|err| err.to_string())
 }
+
+#[tauri::command]
+pub fn db_validate_room_messages(
+    app: AppHandle,
+    room_id: String,
+    messages: Vec<Value>,
+) -> Result<Value, String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    let report = repo
+        .validate_room_messages(&room_id, &messages)
+        .map_err(|err| err.to_string())?;
+    serde_json::to_value(report).map_err(|err| err.to_string())
+}

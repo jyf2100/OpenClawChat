@@ -670,6 +670,31 @@ export function getMessageImportStatus(): MessageImportStatus {
   return messageImportScheduler.getStatus();
 }
 
+export function triggerMessageImport(roomId?: string, priority: MessageImportPriority = 'normal'): void {
+  if (roomId) {
+    messageImportScheduler.scheduleRoom(roomId, priority);
+    return;
+  }
+
+  void messageStorage.loadAllMessages().then((allMessages) => {
+    Object.keys(allMessages).forEach((targetRoomId) => {
+      messageImportScheduler.scheduleRoom(targetRoomId, priority);
+    });
+  });
+}
+
+export async function validateRoomMessagesAgainstDb(roomId: string): Promise<{
+  room_id: string;
+  expected_count: number;
+  db_count: number;
+  missing_ids: string[];
+  extra_ids: string[];
+  mismatched_ids: string[];
+}> {
+  const messages = await messageStorage.loadMessages(roomId);
+  return dbBridge.validateRoomMessages(roomId, messages);
+}
+
 export async function importMessagesToDbInBackground(roomIds?: string[]): Promise<void> {
   if (!dbBridge.isAvailable()) {
     return;

@@ -79,6 +79,17 @@ export const dbBridge = {
   async getRoomMessageSamples<T = any[]>(roomId: string, ids: string[]): Promise<T> {
     return invokeDb<T>('db_get_room_message_samples', { roomId, ids });
   },
+
+  async validateRoomMessages<T = {
+    room_id: string;
+    expected_count: number;
+    db_count: number;
+    missing_ids: string[];
+    extra_ids: string[];
+    mismatched_ids: string[];
+  }>(roomId: string, messages: unknown[]): Promise<T> {
+    return invokeDb<T>('db_validate_room_messages', { roomId, messages });
+  },
 };
 
 export async function runDbMirror(label: string, task: () => Promise<void>): Promise<void> {
