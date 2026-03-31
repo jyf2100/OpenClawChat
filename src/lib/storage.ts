@@ -744,6 +744,35 @@ export async function validateRoomMessagesAgainstDb(roomId: string): Promise<{
   return dbBridge.validateRoomMessages(roomId, messages);
 }
 
+export async function maybeLoadRecentRoomMessagesFromDb(roomId: string, limit: number): Promise<Message[] | null> {
+  if (!dbBridge.isAvailable()) {
+    return null;
+  }
+
+  const sourceMessages = await messageStorage.loadMessages(roomId);
+  const recentMessages = sourceMessages.slice(-limit);
+  if (recentMessages.length === 0) {
+    return null;
+  }
+
+  const report = await dbBridge.validateRoomMessages(roomId, recentMessages);
+  if (report.missing_ids.length > 0 || report.mismatched_ids.length > 0) {
+    logger.warn('Storage', 'recent room db read gated by validation failure', {
+      roomId,
+      missing: report.missing_ids.length,
+      mismatched: report.mismatched_ids.length,
+    });
+    return null;
+  }
+
+  const dbMessages = await dbBridge.listRecentRoomMessages<Message[]>(roomId, limit, 0);
+  logger.info('Storage', 'recent room messages loaded from db', {
+    roomId,
+    count: Array.isArray(dbMessages) ? dbMessages.length : 0,
+  });
+  return Array.isArray(dbMessages) ? dbMessages : null;
+}
+
 export async function importMessagesToDbInBackground(roomIds?: string[]): Promise<void> {
   if (!dbBridge.isAvailable()) {
     return;

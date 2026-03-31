@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { Room, Message } from "../types";
-import { getMessageImportStatus, roomStorage, messageStorage, setMessageImportActiveRoom } from "../lib/storage";
+import { getMessageImportStatus, maybeLoadRecentRoomMessagesFromDb, roomStorage, messageStorage, setMessageImportActiveRoom } from "../lib/storage";
 import { logger } from "../lib/logger";
 import { buildRoomId, DEFAULT_SESSION_KEY, getGatewayIdFromRoomId, isDefaultSessionRoom } from "../lib/protocol";
 
@@ -19,6 +19,7 @@ interface RoomStore {
   activeRoomId: string | null;
   // 内部使用优化结构，外部接口保持兼容
   _roomMessages: Record<string, RoomMessages>;
+  _dbRecentMessages: Record<string, Message[]>;
   _initialized: boolean;
 
   // Actions
@@ -45,6 +46,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   rooms: [],
   activeRoomId: null,
   _roomMessages: {},
+  _dbRecentMessages: {},
   _initialized: false,
 
   // 初始化：从存储加载数据
@@ -209,6 +211,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         rooms: migratedRooms,
         activeRoomId: nextActiveRoomId,
         _roomMessages: roomMessages,
+        _dbRecentMessages: {},
         _initialized: true,
       });
 
@@ -279,6 +282,18 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   setActiveRoom: async (id) => {
     set({ activeRoomId: id });
     setMessageImportActiveRoom(id);
+
+    if (id) {
+      void maybeLoadRecentRoomMessagesFromDb(id, 100).then((messages) => {
+        if (!messages) return;
+        set((state) => ({
+          _dbRecentMessages: {
+            ...state._dbRecentMessages,
+            [id]: messages,
+          },
+        }));
+      });
+    }
 
     try {
       if (id) {
@@ -460,6 +475,13 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   },
 
   getMessagesPaginated: (roomId, page, pageSize) => {
+    if (page === 1) {
+      const dbRecent = get()._dbRecentMessages[roomId];
+      if (dbRecent && dbRecent.length > 0) {
+        return dbRecent.slice(0, pageSize);
+      }
+    }
+
     const roomMsgs = get()._roomMessages[roomId];
     if (!roomMsgs) return [];
 

@@ -155,3 +155,16 @@ pub fn db_validate_room_messages(
         .map_err(|err| err.to_string())?;
     serde_json::to_value(report).map_err(|err| err.to_string())
 }
+
+#[tauri::command]
+pub fn db_list_recent_room_messages(
+    app: AppHandle,
+    room_id: String,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<Value>, String> {
+    let db = open_database(&app)?;
+    let repo = MessageRepository::new(db.connection());
+    repo.list_recent_by_room(&room_id, limit, offset)
+        .map_err(|err| err.to_string())
+}

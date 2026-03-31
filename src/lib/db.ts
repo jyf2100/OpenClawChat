@@ -90,6 +90,14 @@ export const dbBridge = {
   }>(roomId: string, messages: unknown[]): Promise<T> {
     return invokeDb<T>('db_validate_room_messages', { roomId, messages });
   },
+
+  async listRecentRoomMessages<T = any[]>(
+    roomId: string,
+    limit: number,
+    offset = 0,
+  ): Promise<T> {
+    return invokeDb<T>('db_list_recent_room_messages', { roomId, limit, offset });
+  },
 };
 
 export async function runDbMirror(label: string, task: () => Promise<void>): Promise<void> {

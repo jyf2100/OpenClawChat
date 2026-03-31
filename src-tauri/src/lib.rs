@@ -53,6 +53,27 @@ mod tests {
         assert!(report.missing_ids.is_empty());
         assert!(report.mismatched_ids.is_empty());
     }
+
+    #[test]
+    fn lists_recent_room_messages_with_limit() {
+        let db = Database::open_in_memory().expect("open in-memory db");
+        let repo = MessageRepository::new(db.connection());
+        let room_id = "room-2";
+        let source = vec![
+            json!({"id":"m1","roomId":room_id,"content":"1","timestamp":1}),
+            json!({"id":"m2","roomId":room_id,"content":"2","timestamp":2}),
+            json!({"id":"m3","roomId":room_id,"content":"3","timestamp":3}),
+        ];
+        repo.import_room_messages(room_id, &source).expect("import");
+
+        let page = repo.list_recent_by_room(room_id, 2, 0).expect("recent page");
+        let ids = page
+            .iter()
+            .map(|item| item.get("id").and_then(serde_json::Value::as_str).unwrap_or(""))
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["m3", "m2"]);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -92,6 +113,7 @@ pub fn run() {
             db_get_room_message_stats,
             db_get_room_message_samples,
             db_validate_room_messages,
+            db_list_recent_room_messages,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
