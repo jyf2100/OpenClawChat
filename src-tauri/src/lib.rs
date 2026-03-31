@@ -28,6 +28,7 @@ mod tests {
         assert!(db.table_exists("templates").expect("templates table exists"));
         assert!(db.table_exists("gateways").expect("gateways table exists"));
         assert!(db.table_exists("agent_configs").expect("agent_configs table exists"));
+        assert!(db.table_exists("rooms").expect("rooms table exists"));
     }
 }
 
@@ -61,6 +62,9 @@ pub fn run() {
             db_get_agent_config,
             db_upsert_agent_config,
             db_delete_agent_config,
+            db_list_rooms,
+            db_upsert_room,
+            db_delete_room,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;

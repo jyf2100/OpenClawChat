@@ -53,6 +53,18 @@ export const dbBridge = {
   async deleteAgentConfig(gatewayId: string, agentId: string): Promise<void> {
     await invokeDb('db_delete_agent_config', { gatewayId, agentId });
   },
+
+  async listRooms<T = any[]>(): Promise<T> {
+    return invokeDb<T>('db_list_rooms');
+  },
+
+  async upsertRoom(id: string, payload: unknown): Promise<void> {
+    await invokeDb('db_upsert_room', { id, payload });
+  },
+
+  async deleteRoom(id: string): Promise<void> {
+    await invokeDb('db_delete_room', { id });
+  },
 };
 
 export async function runDbMirror(label: string, task: () => Promise<void>): Promise<void> {

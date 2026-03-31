@@ -56,6 +56,22 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
           updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
           PRIMARY KEY (gateway_id, agent_id)
         );
+        CREATE TABLE IF NOT EXISTS rooms (
+          id TEXT PRIMARY KEY,
+          gateway_id TEXT NOT NULL,
+          project_id TEXT,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          unread_count INTEGER NOT NULL DEFAULT 0,
+          pinned INTEGER,
+          order_index INTEGER,
+          room_type TEXT,
+          collaboration_json TEXT,
+          last_message_json TEXT,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
         ",
     )?;
 

@@ -476,6 +476,18 @@ async function loadGatewaysFromDb(): Promise<GatewayConfig[]> {
   return mergeAgentConfigsIntoGateways(gateways, Array.isArray(rows) ? rows : []);
 }
 
+function logReadSource(scope: string, source: 'db' | 'store', count: number): void {
+  logger.debug('Storage', `${scope} loaded from ${source}`, { count });
+}
+
+function logConsistency(scope: string, dbCount: number, storeCount: number): void {
+  if (dbCount !== storeCount) {
+    logger.warn('Storage', `${scope} count mismatch`, { dbCount, storeCount });
+  } else {
+    logger.debug('Storage', `${scope} count match`, { count: dbCount });
+  }
+}
+
 /**
  * 网关存储操作
  */
@@ -494,19 +506,21 @@ export const gatewayStorage = {
    * 加载网关列表
    */
   async loadGateways(): Promise<GatewayConfig[]> {
+    const storeGateways = await defaultStorage.get<GatewayConfig[]>(STORAGE_KEYS.GATEWAYS) || [];
     if (dbBridge.isAvailable()) {
       try {
         const dbGateways = await loadGatewaysFromDb();
         if (dbGateways.length > 0) {
+          logReadSource('gateways', 'db', dbGateways.length);
+          logConsistency('gateways', dbGateways.length, storeGateways.length);
           return dbGateways;
         }
       } catch (error) {
         logger.warn('Storage', 'loadGateways db read failed, fallback to store', error);
       }
     }
-
-    const result = await defaultStorage.get<GatewayConfig[]>(STORAGE_KEYS.GATEWAYS);
-    return result || [];
+    logReadSource('gateways', 'store', storeGateways.length);
+    return storeGateways;
   },
 
   /**
@@ -562,14 +576,42 @@ export const roomStorage = {
    */
   async saveRooms(rooms: Room[]): Promise<void> {
     await defaultStorage.set(STORAGE_KEYS.ROOMS, rooms);
+    await runDbMirror('saveRooms', async () => {
+      const existing = await dbBridge.listRooms<Room[]>();
+      const nextIds = new Set(rooms.map((room) => room.id));
+
+      for (const room of rooms) {
+        await dbBridge.upsertRoom(room.id, room);
+      }
+
+      for (const room of existing) {
+        if (!nextIds.has(room.id)) {
+          await dbBridge.deleteRoom(room.id);
+        }
+      }
+    });
   },
 
   /**
    * 加载房间列表
    */
   async loadRooms(): Promise<Room[]> {
-    const result = await defaultStorage.get<Room[]>(STORAGE_KEYS.ROOMS);
-    return result || [];
+    const storeRooms = await defaultStorage.get<Room[]>(STORAGE_KEYS.ROOMS) || [];
+    if (dbBridge.isAvailable()) {
+      try {
+        const dbRooms = await dbBridge.listRooms<Room[]>();
+        if (Array.isArray(dbRooms) && dbRooms.length > 0) {
+          logReadSource('rooms', 'db', dbRooms.length);
+          logConsistency('rooms', dbRooms.length, storeRooms.length);
+          return dbRooms;
+        }
+      } catch (error) {
+        logger.warn('Storage', 'loadRooms db read failed, fallback to store', error);
+      }
+    }
+
+    logReadSource('rooms', 'store', storeRooms.length);
+    return storeRooms;
   },
 
   /**
@@ -723,25 +765,30 @@ export const roleTemplateStorage = {
   },
 
   async loadTemplates(): Promise<RoleTemplate[]> {
+    const storeTemplates = (await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES) || [])
+      .map(({ role: _role, ...template }) => template as RoleTemplate);
     if (dbBridge.isAvailable()) {
       try {
         const dbTemplates = await dbBridge.listTemplates<RoleTemplate[]>();
         if (Array.isArray(dbTemplates) && dbTemplates.length > 0) {
-          return dbTemplates.map(stripLegacyTemplateRole);
+          const normalized = dbTemplates.map(stripLegacyTemplateRole);
+          logReadSource('templates', 'db', normalized.length);
+          logConsistency('templates', normalized.length, storeTemplates.length);
+          return normalized;
         }
       } catch (error) {
         logger.warn('Storage', 'loadTemplates db read failed, fallback to store', error);
       }
     }
+    const normalized = storeTemplates;
 
     const result = await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES);
     const templates = result || [];
-    const normalized = templates.map(({ role: _role, ...template }) => template as RoleTemplate);
-
     if (templates.some((template) => 'role' in template)) {
       await defaultStorage.set(STORAGE_KEYS.ROLE_TEMPLATES, normalized);
     }
 
+    logReadSource('templates', 'store', normalized.length);
     return normalized;
   },
 };
