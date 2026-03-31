@@ -27,6 +27,9 @@ const STORAGE_KEYS = {
   DOCUMENTS: 'clawchat.documentsByProject',
   ARCHIVED_CONVERSATIONS: 'clawchat.archivedConversations',
   ROLE_TEMPLATES: 'clawchat.roleTemplates',
+  DB_PRIMARY_GATEWAYS_MIGRATED: 'clawchat.dbPrimary.gateways.v1',
+  DB_PRIMARY_ROOMS_MIGRATED: 'clawchat.dbPrimary.rooms.v1',
+  DB_PRIMARY_TEMPLATES_MIGRATED: 'clawchat.dbPrimary.templates.v1',
 } as const;
 
 export interface ArchivedConversationSnapshot {
@@ -391,6 +394,14 @@ function stripLegacyTemplateRole(template: RoleTemplate): RoleTemplate {
   return normalized as RoleTemplate;
 }
 
+async function isMigrationComplete(key: string): Promise<boolean> {
+  return Boolean(await defaultStorage.get<boolean>(key));
+}
+
+async function markMigrationComplete(key: string): Promise<void> {
+  await defaultStorage.set(key, true);
+}
+
 async function mirrorGatewaysToDb(gateways: GatewayConfig[]): Promise<void> {
   if (!dbBridge.isAvailable()) return;
 
@@ -476,16 +487,54 @@ async function loadGatewaysFromDb(): Promise<GatewayConfig[]> {
   return mergeAgentConfigsIntoGateways(gateways, Array.isArray(rows) ? rows : []);
 }
 
-function logReadSource(scope: string, source: 'db' | 'store', count: number): void {
-  logger.debug('Storage', `${scope} loaded from ${source}`, { count });
+async function migrateGatewaysToDbIfNeeded(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+  if (await isMigrationComplete(STORAGE_KEYS.DB_PRIMARY_GATEWAYS_MIGRATED)) return;
+
+  const storeGateways = await defaultStorage.get<GatewayConfig[]>(STORAGE_KEYS.GATEWAYS) || [];
+  if (storeGateways.length > 0) {
+    await mirrorGatewaysToDb(storeGateways);
+    logger.info('Storage', 'migrated gateways from legacy store to db', { count: storeGateways.length });
+  }
+  await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_GATEWAYS_MIGRATED);
 }
 
-function logConsistency(scope: string, dbCount: number, storeCount: number): void {
-  if (dbCount !== storeCount) {
-    logger.warn('Storage', `${scope} count mismatch`, { dbCount, storeCount });
-  } else {
-    logger.debug('Storage', `${scope} count match`, { count: dbCount });
+async function migrateRoomsToDbIfNeeded(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+  if (await isMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ROOMS_MIGRATED)) return;
+
+  const storeRooms = await defaultStorage.get<Room[]>(STORAGE_KEYS.ROOMS) || [];
+  if (storeRooms.length > 0) {
+    const existing = await dbBridge.listRooms<Room[]>();
+    const nextIds = new Set(storeRooms.map((room) => room.id));
+    for (const room of storeRooms) {
+      await dbBridge.upsertRoom(room.id, room);
+    }
+    for (const room of existing) {
+      if (!nextIds.has(room.id)) {
+        await dbBridge.deleteRoom(room.id);
+      }
+    }
+    logger.info('Storage', 'migrated rooms from legacy store to db', { count: storeRooms.length });
   }
+  await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ROOMS_MIGRATED);
+}
+
+async function migrateTemplatesToDbIfNeeded(): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+  if (await isMigrationComplete(STORAGE_KEYS.DB_PRIMARY_TEMPLATES_MIGRATED)) return;
+
+  const storeTemplates = (await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES) || [])
+    .map(stripLegacyTemplateRole);
+  if (storeTemplates.length > 0) {
+    await mirrorTemplatesToDb(storeTemplates);
+    logger.info('Storage', 'migrated templates from legacy store to db', { count: storeTemplates.length });
+  }
+  await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_TEMPLATES_MIGRATED);
+}
+
+function logReadSource(scope: string, source: 'db' | 'store', count: number): void {
+  logger.debug('Storage', `${scope} loaded from ${source}`, { count });
 }
 
 type MessageImportPriority = 'active' | 'normal';
@@ -738,31 +787,29 @@ export const gatewayStorage = {
    * 保存网关列表
    */
   async saveGateways(gateways: GatewayConfig[]): Promise<void> {
-    await defaultStorage.set(STORAGE_KEYS.GATEWAYS, gateways);
-    await runDbMirror('saveGateways', async () => {
-      await mirrorGatewaysToDb(gateways);
-    });
+    if (!dbBridge.isAvailable()) {
+      await defaultStorage.set(STORAGE_KEYS.GATEWAYS, gateways);
+      return;
+    }
+
+    await mirrorGatewaysToDb(gateways);
+    await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_GATEWAYS_MIGRATED);
   },
 
   /**
    * 加载网关列表
    */
   async loadGateways(): Promise<GatewayConfig[]> {
-    const storeGateways = await defaultStorage.get<GatewayConfig[]>(STORAGE_KEYS.GATEWAYS) || [];
-    if (dbBridge.isAvailable()) {
-      try {
-        const dbGateways = await loadGatewaysFromDb();
-        if (dbGateways.length > 0) {
-          logReadSource('gateways', 'db', dbGateways.length);
-          logConsistency('gateways', dbGateways.length, storeGateways.length);
-          return dbGateways;
-        }
-      } catch (error) {
-        logger.warn('Storage', 'loadGateways db read failed, fallback to store', error);
-      }
+    if (!dbBridge.isAvailable()) {
+      const storeGateways = await defaultStorage.get<GatewayConfig[]>(STORAGE_KEYS.GATEWAYS) || [];
+      logReadSource('gateways', 'store', storeGateways.length);
+      return storeGateways;
     }
-    logReadSource('gateways', 'store', storeGateways.length);
-    return storeGateways;
+
+    await migrateGatewaysToDbIfNeeded();
+    const dbGateways = await loadGatewaysFromDb();
+    logReadSource('gateways', 'db', dbGateways.length);
+    return dbGateways;
   },
 
   /**
@@ -817,43 +864,41 @@ export const roomStorage = {
    * 保存房间列表
    */
   async saveRooms(rooms: Room[]): Promise<void> {
-    await defaultStorage.set(STORAGE_KEYS.ROOMS, rooms);
-    await runDbMirror('saveRooms', async () => {
-      const existing = await dbBridge.listRooms<Room[]>();
-      const nextIds = new Set(rooms.map((room) => room.id));
+    if (!dbBridge.isAvailable()) {
+      await defaultStorage.set(STORAGE_KEYS.ROOMS, rooms);
+      return;
+    }
 
-      for (const room of rooms) {
-        await dbBridge.upsertRoom(room.id, room);
-      }
+    const existing = await dbBridge.listRooms<Room[]>();
+    const nextIds = new Set(rooms.map((room) => room.id));
 
-      for (const room of existing) {
-        if (!nextIds.has(room.id)) {
-          await dbBridge.deleteRoom(room.id);
-        }
+    for (const room of rooms) {
+      await dbBridge.upsertRoom(room.id, room);
+    }
+
+    for (const room of existing) {
+      if (!nextIds.has(room.id)) {
+        await dbBridge.deleteRoom(room.id);
       }
-    });
+    }
+
+    await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_ROOMS_MIGRATED);
   },
 
   /**
    * 加载房间列表
    */
   async loadRooms(): Promise<Room[]> {
-    const storeRooms = await defaultStorage.get<Room[]>(STORAGE_KEYS.ROOMS) || [];
-    if (dbBridge.isAvailable()) {
-      try {
-        const dbRooms = await dbBridge.listRooms<Room[]>();
-        if (Array.isArray(dbRooms) && dbRooms.length > 0) {
-          logReadSource('rooms', 'db', dbRooms.length);
-          logConsistency('rooms', dbRooms.length, storeRooms.length);
-          return dbRooms;
-        }
-      } catch (error) {
-        logger.warn('Storage', 'loadRooms db read failed, fallback to store', error);
-      }
+    if (!dbBridge.isAvailable()) {
+      const storeRooms = await defaultStorage.get<Room[]>(STORAGE_KEYS.ROOMS) || [];
+      logReadSource('rooms', 'store', storeRooms.length);
+      return storeRooms;
     }
 
-    logReadSource('rooms', 'store', storeRooms.length);
-    return storeRooms;
+    await migrateRoomsToDbIfNeeded();
+    const dbRooms = await dbBridge.listRooms<Room[]>();
+    logReadSource('rooms', 'db', Array.isArray(dbRooms) ? dbRooms.length : 0);
+    return Array.isArray(dbRooms) ? dbRooms : [];
   },
 
   /**
@@ -1000,37 +1045,27 @@ export const archiveStorage = {
 export const roleTemplateStorage = {
   async saveTemplates(templates: RoleTemplate[]): Promise<void> {
     const normalized = templates.map(stripLegacyTemplateRole);
-    await defaultStorage.set(STORAGE_KEYS.ROLE_TEMPLATES, normalized);
-    await runDbMirror('saveTemplates', async () => {
-      await mirrorTemplatesToDb(normalized);
-    });
+    if (!dbBridge.isAvailable()) {
+      await defaultStorage.set(STORAGE_KEYS.ROLE_TEMPLATES, normalized);
+      return;
+    }
+
+    await mirrorTemplatesToDb(normalized);
+    await markMigrationComplete(STORAGE_KEYS.DB_PRIMARY_TEMPLATES_MIGRATED);
   },
 
   async loadTemplates(): Promise<RoleTemplate[]> {
-    const storeTemplates = (await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES) || [])
-      .map(({ role: _role, ...template }) => template as RoleTemplate);
-    if (dbBridge.isAvailable()) {
-      try {
-        const dbTemplates = await dbBridge.listTemplates<RoleTemplate[]>();
-        if (Array.isArray(dbTemplates) && dbTemplates.length > 0) {
-          const normalized = dbTemplates.map(stripLegacyTemplateRole);
-          logReadSource('templates', 'db', normalized.length);
-          logConsistency('templates', normalized.length, storeTemplates.length);
-          return normalized;
-        }
-      } catch (error) {
-        logger.warn('Storage', 'loadTemplates db read failed, fallback to store', error);
-      }
-    }
-    const normalized = storeTemplates;
-
-    const result = await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES);
-    const templates = result || [];
-    if (templates.some((template) => 'role' in template)) {
-      await defaultStorage.set(STORAGE_KEYS.ROLE_TEMPLATES, normalized);
+    if (!dbBridge.isAvailable()) {
+      const storeTemplates = (await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES) || [])
+        .map(({ role: _role, ...template }) => template as RoleTemplate);
+      logReadSource('templates', 'store', storeTemplates.length);
+      return storeTemplates;
     }
 
-    logReadSource('templates', 'store', normalized.length);
+    await migrateTemplatesToDbIfNeeded();
+    const dbTemplates = await dbBridge.listTemplates<RoleTemplate[]>();
+    const normalized = (Array.isArray(dbTemplates) ? dbTemplates : []).map(stripLegacyTemplateRole);
+    logReadSource('templates', 'db', normalized.length);
     return normalized;
   },
 };
