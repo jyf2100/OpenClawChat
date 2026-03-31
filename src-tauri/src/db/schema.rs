@@ -1,0 +1,1 @@
+pub const LATEST_SCHEMA_VERSION: i64 = 1;

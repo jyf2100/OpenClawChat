@@ -8,8 +8,12 @@ import type {
   GatewayConfig,
   Message,
   Room,
+  ProjectDocument,
+  RoleTemplate,
 } from '../types';
 import { debounce } from 'lodash-es';
+import { dbBridge, runDbMirror } from './db';
+import { logger } from './logger';
 
 /**
  * 存储键定义
@@ -20,7 +24,21 @@ const STORAGE_KEYS = {
   ACTIVE_SESSION: 'clawchat.activeSession',
   SETTINGS: 'clawchat.settings',
   MESSAGES: 'clawchat.messages',
+  DOCUMENTS: 'clawchat.documentsByProject',
+  ARCHIVED_CONVERSATIONS: 'clawchat.archivedConversations',
+  ROLE_TEMPLATES: 'clawchat.roleTemplates',
 } as const;
+
+export interface ArchivedConversationSnapshot {
+  id: string;
+  roomId: string;
+  gatewayId?: string;
+  sessionKey?: string;
+  roomName?: string;
+  archivedAt: number;
+  summary: string;
+  messages: Message[];
+}
 
 /**
  * 应用设置
@@ -186,8 +204,7 @@ class TauriStoreAdapter implements StorageAdapter {
       this.store = await load('clawchat-store.json', { defaults: {}, autoSave: 200 });
       
       // 监听存储变化并打印日志
-      await this.store.onKeyChange('clawchat.messages', (value: any) => {
-        console.log('[Storage] Store 消息更新:', value ? '有数据' : '空');
+      await this.store.onKeyChange('clawchat.messages', (_value: any) => {
         // 每次更新都强制保存
         this.store.save();
       });
@@ -196,7 +213,7 @@ class TauriStoreAdapter implements StorageAdapter {
 
       // 强制每次加载都重新保存一次，确保文件存在
       await this.store.save();
-      console.log('[Storage] Store 初始化完成并已保存');
+      logger.info('Storage', 'tauri store initialized');
 
       const migratedFlag = await this.store.get('clawchat.migratedFromLocalStorage');
       if (!migratedFlag && typeof localStorage !== 'undefined') {
@@ -276,13 +293,13 @@ export class Storage {
   private createAdapter(): StorageAdapter {
     // 在浏览器开发环境下直接使用 localStorage
     if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
-      console.log('[Storage] 浏览器环境，使用 localStorage');
+      logger.info('Storage', 'using localStorage adapter');
       return new LocalStorageAdapter();
     }
 
     // Tauri 环境尝试使用 Tauri store
     if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-      console.log('[Storage] Tauri 环境，尝试使用 Tauri store');
+      logger.info('Storage', 'using Tauri store adapter');
       return new TauriStoreAdapter();
     }
 
@@ -369,6 +386,96 @@ export class Storage {
 // 默认存储实例
 const defaultStorage = new Storage();
 
+function stripLegacyTemplateRole(template: RoleTemplate): RoleTemplate {
+  const { role: _role, ...normalized } = template as RoleTemplate & { role?: unknown };
+  return normalized as RoleTemplate;
+}
+
+async function mirrorGatewaysToDb(gateways: GatewayConfig[]): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+
+  const existing = await dbBridge.listGateways<GatewayConfig[]>();
+  const nextIds = new Set(gateways.map((gateway) => gateway.id));
+
+  for (const gateway of gateways) {
+    await dbBridge.upsertGateway(gateway.id, gateway);
+
+    const nextAgentConfigs = gateway.agentConfigs || {};
+    const existingAgentConfigs = existing.find((item) => item.id === gateway.id)?.agentConfigs || {};
+    const nextAgentIds = new Set(Object.keys(nextAgentConfigs));
+
+    for (const [agentId, config] of Object.entries(nextAgentConfigs)) {
+      await dbBridge.upsertAgentConfig(gateway.id, agentId, config);
+    }
+
+    for (const agentId of Object.keys(existingAgentConfigs)) {
+      if (!nextAgentIds.has(agentId)) {
+        await dbBridge.deleteAgentConfig(gateway.id, agentId);
+      }
+    }
+  }
+
+  for (const gateway of existing) {
+    if (!nextIds.has(gateway.id)) {
+      await dbBridge.deleteGateway(gateway.id);
+    }
+  }
+}
+
+async function mirrorTemplatesToDb(templates: RoleTemplate[]): Promise<void> {
+  if (!dbBridge.isAvailable()) return;
+
+  const existing = await dbBridge.listTemplates<RoleTemplate[]>();
+  const nextIds = new Set(templates.map((template) => template.id));
+
+  for (const template of templates) {
+    await dbBridge.upsertTemplate(template.id, stripLegacyTemplateRole(template));
+  }
+
+  for (const template of existing) {
+    if (!nextIds.has(template.id)) {
+      await dbBridge.deleteTemplate(template.id);
+    }
+  }
+}
+
+type DbAgentConfigRow = {
+  gatewayId: string;
+  agentId: string;
+  payload: GatewayConfig['agentConfigs'] extends Record<string, infer T> ? T : unknown;
+};
+
+function mergeAgentConfigsIntoGateways(
+  gateways: GatewayConfig[],
+  rows: DbAgentConfigRow[],
+): GatewayConfig[] {
+  if (rows.length === 0) {
+    return gateways;
+  }
+
+  const rowsByGateway = new Map<string, Record<string, any>>();
+  for (const row of rows) {
+    const existing = rowsByGateway.get(row.gatewayId) || {};
+    existing[row.agentId] = row.payload;
+    rowsByGateway.set(row.gatewayId, existing);
+  }
+
+  return gateways.map((gateway) => ({
+    ...gateway,
+    agentConfigs: rowsByGateway.get(gateway.id) || gateway.agentConfigs || {},
+  }));
+}
+
+async function loadGatewaysFromDb(): Promise<GatewayConfig[]> {
+  const gateways = await dbBridge.listGateways<GatewayConfig[]>();
+  if (!Array.isArray(gateways) || gateways.length === 0) {
+    return [];
+  }
+
+  const rows = await dbBridge.listAgentConfigs<DbAgentConfigRow[]>();
+  return mergeAgentConfigsIntoGateways(gateways, Array.isArray(rows) ? rows : []);
+}
+
 /**
  * 网关存储操作
  */
@@ -378,12 +485,26 @@ export const gatewayStorage = {
    */
   async saveGateways(gateways: GatewayConfig[]): Promise<void> {
     await defaultStorage.set(STORAGE_KEYS.GATEWAYS, gateways);
+    await runDbMirror('saveGateways', async () => {
+      await mirrorGatewaysToDb(gateways);
+    });
   },
 
   /**
    * 加载网关列表
    */
   async loadGateways(): Promise<GatewayConfig[]> {
+    if (dbBridge.isAvailable()) {
+      try {
+        const dbGateways = await loadGatewaysFromDb();
+        if (dbGateways.length > 0) {
+          return dbGateways;
+        }
+      } catch (error) {
+        logger.warn('Storage', 'loadGateways db read failed, fallback to store', error);
+      }
+    }
+
     const result = await defaultStorage.get<GatewayConfig[]>(STORAGE_KEYS.GATEWAYS);
     return result || [];
   },
@@ -552,6 +673,80 @@ export const settingsStorage = {
 };
 
 /**
+ * 文档库存储操作（按 projectId 分组）
+ */
+export const documentStorage = {
+  async loadDocumentsByProject(): Promise<Record<string, ProjectDocument[]>> {
+    const result = await defaultStorage.get<Record<string, ProjectDocument[]>>(STORAGE_KEYS.DOCUMENTS);
+    return result || {};
+  },
+
+  async saveDocumentsByProject(documentsByProject: Record<string, ProjectDocument[]>): Promise<void> {
+    await defaultStorage.set(STORAGE_KEYS.DOCUMENTS, documentsByProject);
+  },
+
+  async loadProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
+    const all = await this.loadDocumentsByProject();
+    return all[projectId] || [];
+  },
+
+  async saveProjectDocuments(projectId: string, documents: ProjectDocument[]): Promise<void> {
+    const all = await this.loadDocumentsByProject();
+    all[projectId] = documents;
+    await this.saveDocumentsByProject(all);
+  },
+};
+
+export const archiveStorage = {
+  async loadArchives(): Promise<ArchivedConversationSnapshot[]> {
+    const result = await defaultStorage.get<ArchivedConversationSnapshot[]>(STORAGE_KEYS.ARCHIVED_CONVERSATIONS);
+    return result || [];
+  },
+
+  async saveArchives(items: ArchivedConversationSnapshot[]): Promise<void> {
+    await defaultStorage.set(STORAGE_KEYS.ARCHIVED_CONVERSATIONS, items);
+  },
+
+  async addArchive(item: ArchivedConversationSnapshot): Promise<void> {
+    const current = await this.loadArchives();
+    await this.saveArchives([item, ...current].slice(0, 200));
+  },
+};
+
+export const roleTemplateStorage = {
+  async saveTemplates(templates: RoleTemplate[]): Promise<void> {
+    const normalized = templates.map(stripLegacyTemplateRole);
+    await defaultStorage.set(STORAGE_KEYS.ROLE_TEMPLATES, normalized);
+    await runDbMirror('saveTemplates', async () => {
+      await mirrorTemplatesToDb(normalized);
+    });
+  },
+
+  async loadTemplates(): Promise<RoleTemplate[]> {
+    if (dbBridge.isAvailable()) {
+      try {
+        const dbTemplates = await dbBridge.listTemplates<RoleTemplate[]>();
+        if (Array.isArray(dbTemplates) && dbTemplates.length > 0) {
+          return dbTemplates.map(stripLegacyTemplateRole);
+        }
+      } catch (error) {
+        logger.warn('Storage', 'loadTemplates db read failed, fallback to store', error);
+      }
+    }
+
+    const result = await defaultStorage.get<RoleTemplate[]>(STORAGE_KEYS.ROLE_TEMPLATES);
+    const templates = result || [];
+    const normalized = templates.map(({ role: _role, ...template }) => template as RoleTemplate);
+
+    if (templates.some((template) => 'role' in template)) {
+      await defaultStorage.set(STORAGE_KEYS.ROLE_TEMPLATES, normalized);
+    }
+
+    return normalized;
+  },
+};
+
+/**
  * 批量消息存储管理器 - 防抖批量写入
  */
 class BatchedMessageStorage {
@@ -597,9 +792,9 @@ class BatchedMessageStorage {
 
       // 一次性写入
       await defaultStorage.set(STORAGE_KEYS.MESSAGES, allMessages);
-      console.log(`[BatchedMessageStorage] 批量写入 ${entries.length} 个房间的消息`);
+      logger.debug('Storage', 'batched messages flushed', { roomCount: entries.length });
     } catch (error) {
-      console.error('[BatchedMessageStorage] 批量写入失败:', error);
+      logger.error('Storage', 'batched message flush failed', error);
       // 将失败的消息放回队列
       for (const [roomId, messages] of entries) {
         this.batch.set(roomId, messages);
@@ -733,6 +928,7 @@ export async function exportData(): Promise<string> {
     activeSession: await roomStorage.loadActiveSession(),
     settings: await settingsStorage.loadSettings(),
     messages: await messageStorage.loadAllMessages(),
+    documentsByProject: await documentStorage.loadDocumentsByProject(),
     exportedAt: Date.now(),
   };
   return JSON.stringify(data, null, 2);
@@ -759,6 +955,9 @@ export async function importData(jsonData: string): Promise<void> {
     }
     if (data.messages) {
       await defaultStorage.set(STORAGE_KEYS.MESSAGES, data.messages);
+    }
+    if (data.documentsByProject) {
+      await documentStorage.saveDocumentsByProject(data.documentsByProject);
     }
   } catch (error) {
     throw new StorageError('导入数据失败', error as Error);

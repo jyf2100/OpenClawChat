@@ -1,13 +1,35 @@
 // Tauri 应用入口
 mod commands;
+mod db;
 mod protocol;
 mod state;
 
 use commands::*;
+use db::ensure_app_database;
 use state::{ConnectionState, ConnectionManager};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tauri::Manager;
+
+#[cfg(test)]
+mod tests {
+    use super::db::Database;
+
+    #[test]
+    fn initializes_schema_migrations_table() {
+        let db = Database::open_in_memory().expect("open in-memory db");
+        let version = db.schema_version().expect("read schema version");
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn initializes_core_storage_tables() {
+        let db = Database::open_in_memory().expect("open in-memory db");
+        assert!(db.table_exists("templates").expect("templates table exists"));
+        assert!(db.table_exists("gateways").expect("gateways table exists"));
+        assert!(db.table_exists("agent_configs").expect("agent_configs table exists"));
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,12 +38,29 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ConnectionState::new())
         .invoke_handler(tauri::generate_handler![
+            clawhub_search_skills,
             gateway_connect,
             gateway_disconnect,
             gateway_send_message,
+            gateway_wait_run,
+            gateway_chat_history,
+            gateway_request,
             gateway_get_status,
             gateway_get_all_status,
             gateway_is_connected,
+            gateway_get_local_defaults,
+            gateway_get_local_device_identity,
+            gateway_sign_device_challenge,
+            db_list_templates,
+            db_upsert_template,
+            db_delete_template,
+            db_list_gateways,
+            db_upsert_gateway,
+            db_delete_gateway,
+            db_list_agent_configs,
+            db_get_agent_config,
+            db_upsert_agent_config,
+            db_delete_agent_config,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
@@ -32,6 +71,9 @@ pub fn run() {
                 std::fs::create_dir_all(&app_data_dir)?;
                 println!("Created App Data Dir");
             }
+
+            let db_path = ensure_app_database(&app_data_dir)?;
+            println!("Database Path: {:?}", db_path);
 
             let connection_state = app.state::<ConnectionState>();
             let manager = Arc::new(RwLock::new(ConnectionManager::new(connection_state.pool())));
